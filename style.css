@@ -10,11 +10,15 @@ body {
     color: #fff;
     min-height: 100vh;
     padding: 20px;
+    position: relative;
+    z-index: 1;
 }
 
 .container {
     max-width: 1200px;
     margin: 0 auto;
+    position: relative;
+    z-index: 2;
 }
 
 /* Header Styles */
@@ -22,6 +26,8 @@ body {
     text-align: center;
     margin-bottom: 60px;
     padding-top: 40px;
+    position: relative;
+    z-index: 3;
 }
 
 .logo {
@@ -35,6 +41,8 @@ body {
     padding: 15px 40px;
     width: fit-content;
     margin: 0 auto;
+    position: relative;
+    z-index: 4;
 }
 
 .logo-dot {
@@ -55,10 +63,14 @@ body {
 /* Main Content */
 .main-content {
     text-align: center;
+    position: relative;
+    z-index: 5;
 }
 
 .hero {
     margin-bottom: 80px;
+    position: relative;
+    z-index: 5;
 }
 
 .hero h2 {
@@ -68,6 +80,7 @@ body {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+    color: #00ff88;
 }
 
 .hero p {
@@ -79,16 +92,20 @@ body {
 .buttons-container {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 30px;
     align-items: center;
     justify-content: center;
-    flex-wrap: wrap;
     margin-top: 40px;
+    position: relative;
+    z-index: 10;
+    pointer-events: auto;
 }
 
 .button-wrapper {
     width: 100%;
-    max-width: 300px;
+    max-width: 280px;
+    position: relative;
+    z-index: 10;
 }
 
 /* Button Styles */
@@ -104,6 +121,9 @@ body {
     text-transform: uppercase;
     letter-spacing: 1px;
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+    position: relative;
+    z-index: 10;
+    pointer-events: auto;
 }
 
 .btn-newsletter {
@@ -156,6 +176,10 @@ body {
     .logo h1 {
         font-size: 20px;
     }
+
+    .button-wrapper {
+        max-width: 250px;
+    }
 }
 
 @media (max-width: 480px) {
@@ -169,6 +193,6 @@ body {
     }
 
     .button-wrapper {
-        max-width: 250px;
+        max-width: 220px;
     }
 }
