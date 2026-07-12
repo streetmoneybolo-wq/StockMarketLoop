@@ -1,0 +1,266 @@
+/* ================================================================
+   INBOX MODULE STYLES
+   Fixed positioning, left side placement, no overlap
+   ================================================================ */
+
+/* Inbox Toggle Button - Fixed Left Side */
+.inbox-toggle {
+    position: fixed;
+    left: 20px;
+    top: 20px;
+    z-index: 999;
+    background: #0d1117;
+    color: #ffffff;
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid #30363d;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    outline: none;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+}
+
+.inbox-toggle:hover {
+    background: #1c2128;
+    border-color: #58a6ff;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(88, 166, 255, 0.2);
+}
+
+.inbox-toggle:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.inbox-toggle[data-open="1"] {
+    background: #238636;
+    border-color: #3fb950;
+    box-shadow: 0 4px 12px rgba(63, 185, 80, 0.2);
+}
+
+.inbox-toggle[data-open="1"]:hover {
+    background: #2ea043;
+    border-color: #58a6ff;
+}
+
+/* Inbox Container - Main Notification Panel */
+.inbox-container {
+    position: fixed;
+    left: 20px;
+    top: 70px;
+    width: 350px;
+    max-height: 500px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    z-index: 998;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.3s ease;
+    animation: slideIn 0.3s ease forwards;
+}
+
+.inbox-container[data-open="1"] {
+    display: flex;
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.inbox-container[data-open="0"] {
+    display: none;
+    opacity: 0;
+    transform: translateY(-10px);
+    pointer-events: none;
+}
+
+/* Animation for smooth slide-in */
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Notification List - Scrollable Container */
+.notification-list {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0;
+}
+
+/* Individual Notification Item */
+.notification-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid #21262d;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.notification-item:last-child {
+    border-bottom: none;
+}
+
+.notification-item:hover {
+    background-color: #161b22;
+}
+
+.notification-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #c9d1d9;
+    margin-bottom: 4px;
+    word-break: break-word;
+}
+
+.notification-message {
+    font-size: 12px;
+    color: #8b949e;
+    margin-bottom: 6px;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.notification-timestamp {
+    font-size: 11px;
+    color: #6e7681;
+    font-style: italic;
+}
+
+/* Empty State - No Notifications */
+.notification-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 16px;
+    text-align: center;
+    color: #8b949e;
+    font-size: 13px;
+    min-height: 120px;
+    flex: 1;
+}
+
+/* Loading State */
+.notification-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+    color: #6e7681;
+    font-size: 13px;
+    min-height: 100px;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* Scrollbar Styling for Notification List */
+.notification-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.notification-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.notification-list::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 3px;
+}
+
+.notification-list::-webkit-scrollbar-thumb:hover {
+    background: #424a54;
+}
+
+/* Responsive Design - Mobile */
+@media (max-width: 600px) {
+    .inbox-toggle {
+        left: 10px;
+        top: 10px;
+        padding: 10px 12px;
+        font-size: 12px;
+    }
+
+    .inbox-container {
+        left: 10px;
+        top: 55px;
+        width: calc(100% - 20px);
+        max-width: 350px;
+        max-height: 400px;
+    }
+
+    .notification-item {
+        padding: 10px 12px;
+    }
+
+    .notification-title {
+        font-size: 12px;
+    }
+
+    .notification-message {
+        font-size: 11px;
+    }
+
+    .notification-timestamp {
+        font-size: 10px;
+    }
+}
+
+@media (max-width: 400px) {
+    .inbox-container {
+        width: calc(100% - 20px);
+        max-width: none;
+    }
+}
+
+/* Accessibility - Focus States */
+.inbox-toggle:focus {
+    outline: 2px solid #58a6ff;
+    outline-offset: 2px;
+}
+
+.notification-item:focus {
+    outline: 2px solid #58a6ff;
+    outline-offset: -2px;
+}
+
+/* Dark Mode Support (already dark by default, but ensure compatibility) */
+@media (prefers-color-scheme: dark) {
+    .inbox-toggle {
+        background: #0d1117;
+        color: #ffffff;
+        border-color: #30363d;
+    }
+
+    .inbox-container {
+        background: #0d1117;
+        border-color: #30363d;
+    }
+
+    .notification-item {
+        border-bottom-color: #21262d;
+    }
+
+    .notification-item:hover {
+        background-color: #161b22;
+    }
+}
