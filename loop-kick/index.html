@@ -10,6 +10,7 @@
     <script>
       const params = new URLSearchParams(window.location.search);
       const fragment = new URLSearchParams(window.location.hash.slice(1));
+      if (params.get("embed") === "1") document.documentElement.classList.add("loop-kick-embed");
       window.LOOP_KICK_CONFIG = {
         transport: "live",
         sessionToken: fragment.get("session") || "",

@@ -3,6 +3,9 @@
 @font-face { font-family: 'Space Grotesk'; font-style: normal; font-weight: 300 700; font-display: swap; src: url('./fonts/grotesk.woff2') format('woff2'); }
 
 html, body { margin: 0; padding: 0; background: #07090b; }
+.loop-kick-embed,
+.loop-kick-embed body,
+.loop-kick-embed #root { background: transparent !important; }
 * { box-sizing: border-box; }
 a { color: #00ff88; text-decoration: none; }
 a:hover { color: #7dffc4; }
