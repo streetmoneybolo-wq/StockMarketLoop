@@ -49,6 +49,7 @@ const NOTIF_TINTS = [
   'linear-gradient(140deg,#ff5c7a,#d42a4c)',
   'linear-gradient(140deg,#b98cff,#8a55e0)',
 ];
+const PEER_NAME = typeof window !== 'undefined' ? (window.LOOP_KICK_CONFIG?.peerName || 'Loop') : 'Loop';
 
 /* ---------------- types ---------------- */
 
@@ -85,10 +86,12 @@ interface State {
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
 
-export default class LoopKickPhone extends React.Component<{}, State> {
+interface Props { initialOpen?: boolean; }
+
+export default class LoopKickPhone extends React.Component<Props, State> {
   state: State = {
-    open: false,
-    slid: false,
+    open: !!this.props.initialOpen,
+    slid: !!this.props.initialOpen,
     tab: 'messages',
     mode: 'compose',
     accent: '#00ff88',
@@ -113,7 +116,7 @@ export default class LoopKickPhone extends React.Component<{}, State> {
     ],
     thread: [],
     notifs: [
-      { title: 'Sarah', text: 'Are you free tonight?', time: '2m', tint: NOTIF_TINTS[0], unread: true },
+      { title: PEER_NAME, text: 'Are you free tonight?', time: '2m', tint: NOTIF_TINTS[0], unread: true },
       { title: 'Alex', text: 'Check out these pics!', time: '14m', tint: NOTIF_TINTS[1], unread: true },
       { title: 'Mike', text: "Let's meet up later", time: '38m', tint: NOTIF_TINTS[2], unread: true },
       { title: 'Loop Live', text: 'Market open stream starts in 10 minutes', time: '1h', tint: NOTIF_TINTS[3], unread: false },
@@ -367,7 +370,7 @@ export default class LoopKickPhone extends React.Component<{}, State> {
                           <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '2px 2px 9px' }}>
                             <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#00ff88', flex: 'none', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.08)' }}>S</div>
                             <div>
-                              <div style={{ fontSize: 12.5, fontWeight: 600, color: '#e8edf2' }}>Sarah</div>
+                              <div style={{ fontSize: 12.5, fontWeight: 600, color: '#e8edf2' }}>{PEER_NAME}</div>
                               <div style={{ fontSize: 9.5, color: acc.c }}>online now</div>
                             </div>
                           </div>
@@ -527,7 +530,7 @@ export default class LoopKickPhone extends React.Component<{}, State> {
                       <div style={{ borderRadius: 13, overflow: 'hidden', position: 'relative', background: '#0a1117', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.5)' }}>
                         <div style={{ height: 132, position: 'relative', background: 'radial-gradient(320px 160px at 50% 32%, #14222e 0%, #0a1117 75%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
                           <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, color: '#00ff88', boxShadow: '0 0 0 2px rgba(0,255,136,.25), inset 0 1px 0 rgba(255,255,255,.08)' }}>S</div>
-                          <div style={{ fontSize: 11.5, fontWeight: 600, color: '#e8edf2' }}>Sarah</div>
+                          <div style={{ fontSize: 11.5, fontWeight: 600, color: '#e8edf2' }}>{PEER_NAME}</div>
                           <div style={{ fontFamily: mono, fontSize: 9.5, color: '#00ff88' }}>{callTime}</div>
                           <div style={{ position: 'absolute', right: 8, bottom: 8, width: 52, height: 38, borderRadius: 8, background: 'repeating-linear-gradient(135deg,#101820 0 6px,#0b1218 6px 12px)', border: '1px solid #1e2831', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: mono, fontSize: 7, color: '#4a545e' }}>YOU</div>
                         </div>
@@ -545,7 +548,7 @@ export default class LoopKickPhone extends React.Component<{}, State> {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%' }}>
                           <div style={{ width: 40, height: 40, borderRadius: '50%', flex: 'none', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 700, color: '#00ff88', boxShadow: '0 0 0 2px rgba(0,255,136,.25)' }}>S</div>
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: '#e8edf2' }}>Sarah</div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#e8edf2' }}>{PEER_NAME}</div>
                             <div style={{ fontFamily: mono, fontSize: 9.5, color: '#00ff88' }}>Voice · {callTime}</div>
                           </div>
                           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'flex-end', gap: 2.5, height: 22 }}>

@@ -19,6 +19,15 @@ const ghost: React.CSSProperties = {
 
 export default function App() {
   const phone = useRef<LoopKickPhone>(null);
+  const embed = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('embed') === '1';
+
+  if (embed) {
+    return (
+      <div style={{ minHeight: '100vh', overflow: 'hidden', background: '#07090b' }}>
+        <LoopKickPhone ref={phone} initialOpen />
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: 'radial-gradient(900px 500px at 75% 10%, #10161c 0%, #07090b 60%)', color: '#e8edf2', fontFamily: "'IBM Plex Sans',sans-serif" }}>

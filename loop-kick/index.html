@@ -8,8 +8,13 @@
   <body>
     <div id="root"></div>
     <script>
+      const params = new URLSearchParams(window.location.search);
+      const fragment = new URLSearchParams(window.location.hash.slice(1));
       window.LOOP_KICK_CONFIG = {
         transport: "live",
+        sessionToken: fragment.get("session") || "",
+        peerId: params.get("peer") || "loop",
+        peerName: params.get("peerName") || "Loop",
         socketUrl: `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`,
         endpoints: {
           messages: "/api/messages",

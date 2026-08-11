@@ -15,11 +15,22 @@ function cleanId(value, fallback) {
   return /^[A-Za-z0-9_.@-]{1,100}$/.test(id) ? id : fallback;
 }
 
-function authFromRequest(req) {
-  return {
-    userId: cleanId(req.get('x-loop-user-id'), 'you'),
-    peerId: cleanId(req.get('x-loop-peer-id'), 'Sarah'),
-  };
+function bearerToken(req) {
+  const match = /^Bearer\s+([^\s]+)$/i.exec(String(req.get('authorization') || ''));
+  return match ? match[1] : '';
+}
+
+async function verifyWordPressSession(token) {
+  if (!token) return null;
+  const endpoint = process.env.LOOP_KICK_SESSION_URL || 'https://stockmarketloop.com/wp-json/sml-loop-kick/v1/session';
+  const response = await fetch(`${endpoint}?token=${encodeURIComponent(token)}`, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) return null;
+  const body = await response.json();
+  const userId = cleanId(body?.userId, '');
+  return userId ? { userId } : null;
 }
 
 function wireMessage(row, userId) {
@@ -61,6 +72,31 @@ export function createLoopKickServer(options = {}) {
   const server = http.createServer(app);
   const sockets = new Set();
   const wss = new WebSocketServer({ noServer: true });
+  const verifySession = options.verifySession || verifyWordPressSession;
+  const sessionCache = new Map();
+
+  async function authenticate(token, peerValue) {
+    if (!token) return null;
+    const cached = sessionCache.get(token);
+    let identity = cached?.expiresAt > Date.now() ? cached.identity : null;
+    if (!identity) {
+      identity = await verifySession(token);
+      if (!identity?.userId) return null;
+      sessionCache.set(token, { identity, expiresAt: Date.now() + 60_000 });
+    }
+    const userId = cleanId(identity.userId, '');
+    const peerId = cleanId(peerValue, 'loop');
+    return userId && peerId ? { userId, peerId } : null;
+  }
+
+  async function requestIdentity(req) {
+    try {
+      return await authenticate(bearerToken(req), req.get('x-loop-peer-id'));
+    } catch (error) {
+      console.error('LOOP-KICK session verification failed:', error.message);
+      return null;
+    }
+  }
 
   const listMessages = db.prepare(`
     SELECT id, sender, receiver, content, timestamp
@@ -81,14 +117,18 @@ export function createLoopKickServer(options = {}) {
     res.json({ ok: true, service: 'loop-kick' });
   });
 
-  app.get('/api/messages', (req, res) => {
-    const { userId, peerId } = authFromRequest(req);
+  app.get('/api/messages', async (req, res) => {
+    const auth = await requestIdentity(req);
+    if (!auth) return res.status(401).json({ error: 'A valid StockMarketLoop session is required.' });
+    const { userId, peerId } = auth;
     const rows = listMessages.all(userId, peerId, peerId, userId);
     res.json({ messages: rows.map((row) => wireMessage(row, userId)) });
   });
 
-  app.post('/api/messages/send', (req, res) => {
-    const { userId, peerId } = authFromRequest(req);
+  app.post('/api/messages/send', async (req, res) => {
+    const auth = await requestIdentity(req);
+    if (!auth) return res.status(401).json({ error: 'A valid StockMarketLoop session is required.' });
+    const { userId, peerId } = auth;
     const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
     if (!content || content.length > 2000) {
       return res.status(422).json({ error: 'content must be between 1 and 2000 characters' });
@@ -124,15 +164,25 @@ export function createLoopKickServer(options = {}) {
     });
   }
 
-  server.on('upgrade', (req, socket, head) => {
+  server.on('upgrade', async (req, socket, head) => {
     const url = new URL(req.url || '/', 'http://localhost');
     if (url.pathname !== '/ws') {
       socket.destroy();
       return;
     }
 
-    const userId = cleanId(url.searchParams.get('user'), 'you');
-    const peerId = cleanId(url.searchParams.get('peer'), 'Sarah');
+    let auth = null;
+    try {
+      auth = await authenticate(url.searchParams.get('session'), url.searchParams.get('peer'));
+    } catch {
+      auth = null;
+    }
+    if (!auth) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    const { userId, peerId } = auth;
     wss.handleUpgrade(req, socket, head, (client) => {
       client.userId = userId;
       client.peerId = peerId;
