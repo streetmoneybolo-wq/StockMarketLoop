@@ -7,7 +7,8 @@
  * the rendered device matches the approved design.
  */
 import React from 'react';
-import { createTransport, Transport, WireMessage } from './transport';
+import { BootstrapData, createTransport, Person, SiteNotification, ThreadSummary, Transport, WireMessage } from './transport';
+import { LiveChirpClient } from './liveChirp';
 
 /* ---------------- static data from the design ---------------- */
 
@@ -53,8 +54,8 @@ const PEER_NAME = typeof window !== 'undefined' ? (window.LOOP_KICK_CONFIG?.peer
 
 /* ---------------- types ---------------- */
 
-interface ThreadMsg { from: 'me' | 'them'; text: string; }
-interface Notif { title: string; text: string; time: string; tint: string; unread: boolean; }
+interface ThreadMsg { id: string; from: 'me' | 'them'; text: string; media?: { id: number; mime: string; url: string }[]; }
+interface Notif { id: string; title: string; text: string; time: string; tint: string; unread: boolean; link?: string; category?: string; }
 interface RoomMsg { user: string; color: string; text: string; }
 
 interface State {
@@ -82,6 +83,16 @@ interface State {
   notifs: Notif[];
   vh: number;
   sendError: string;
+  threads: ThreadSummary[];
+  activeThreadId: number;
+  people: Person[];
+  search: string;
+  searchResults: Person[];
+  loading: boolean;
+  uploading: boolean;
+  preferences: Record<string, string | number | boolean>;
+  chirpPrefs: Record<string, string | number | boolean>;
+  chirpStatus: string;
 }
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
@@ -116,19 +127,33 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     ],
     thread: [],
     notifs: [
-      { title: PEER_NAME, text: 'Are you free tonight?', time: '2m', tint: NOTIF_TINTS[0], unread: true },
-      { title: 'Alex', text: 'Check out these pics!', time: '14m', tint: NOTIF_TINTS[1], unread: true },
-      { title: 'Mike', text: "Let's meet up later", time: '38m', tint: NOTIF_TINTS[2], unread: true },
-      { title: 'Loop Live', text: 'Market open stream starts in 10 minutes', time: '1h', tint: NOTIF_TINTS[3], unread: false },
+      { id: 'demo-1', title: PEER_NAME, text: 'Are you free tonight?', time: '2m', tint: NOTIF_TINTS[0], unread: true },
+      { id: 'demo-2', title: 'Alex', text: 'Check out these pics!', time: '14m', tint: NOTIF_TINTS[1], unread: true },
+      { id: 'demo-3', title: 'Mike', text: "Let's meet up later", time: '38m', tint: NOTIF_TINTS[2], unread: true },
+      { id: 'demo-4', title: 'Loop Live', text: 'Market open stream starts in 10 minutes', time: '1h', tint: NOTIF_TINTS[3], unread: false },
     ],
     vh: typeof window !== 'undefined' ? window.innerHeight : 900,
     sendError: '',
+    threads: [],
+    activeThreadId: 0,
+    people: [],
+    search: '',
+    searchResults: [],
+    loading: false,
+    uploading: false,
+    preferences: {},
+    chirpPrefs: {},
+    chirpStatus: '',
   };
 
   private transport: Transport = createTransport();
+  private chirp = new LiveChirpClient(this.transport, chirpStatus => this.setState({ chirpStatus }));
   private _wantScroll = false;
   private _interval: ReturnType<typeof setInterval> | null = null;
   private _roomTick = 0;
+  private _searchTimer: ReturnType<typeof setTimeout> | null = null;
+  private _chirpTimer: ReturnType<typeof setInterval> | null = null;
+  private _fileInput = React.createRef<HTMLInputElement>();
   private _key = (e: KeyboardEvent) => {
     if (!this.state.open) return;
     const tag = (e.target as HTMLElement | null)?.tagName;
@@ -163,14 +188,14 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     window.addEventListener('resize', this._resize);
     window.addEventListener('keydown', this._key);
 
-    /* ---- message system: initial load + live stream ---- */
-    this.transport.load()
-      .then(list => this.setState({ thread: list.map(this.wireToThread) }))
-      .catch(err => {
-        console.error('LOOP-KICK:', err.message);
-        this.setState({ sendError: 'Could not load messages.' });
-      })
-      .finally(() => this.transport.connect(this.onIncoming));
+    /* ---- the existing StockMarketLoop messenger is the source of truth ---- */
+    void this.hydrate().finally(() => this.transport.connect(this.onIncoming, () => void this.refreshSummary()));
+    this._chirpTimer = setInterval(() => {
+      this.transport.chirpIncoming().then(data => {
+        const incoming = (data.incoming || [])[0];
+        if (incoming) void this.chirp.acceptIncoming(incoming);
+      }).catch(() => {});
+    }, 2800);
 
     /* ---- design's ambient simulations (watch/call/room) ---- */
     this._interval = setInterval(() => {
@@ -200,15 +225,144 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     window.removeEventListener('keydown', this._key);
     window.removeEventListener('resize', this._resize);
     if (this._interval) clearInterval(this._interval);
+    if (this._searchTimer) clearTimeout(this._searchTimer);
+    if (this._chirpTimer) clearInterval(this._chirpTimer);
+    void this.chirp.close(true);
     this.transport.disconnect();
   }
 
   /* ---------------- message system wiring ---------------- */
 
   private wireToThread = (m: WireMessage): ThreadMsg => ({
+    id: m.id,
     from: m.mine ? 'me' : 'them',
     text: m.text,
+    media: m.media,
   });
+
+  private notification = (item: SiteNotification, index: number): Notif => ({
+    id: item.id,
+    title: item.category === 'priority' ? 'Priority alert' : (item.source === 'loop_bucks' ? 'Loop Bucks' : 'StockMarketLoop'),
+    text: item.message,
+    time: item.date ? new Date(item.date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '',
+    tint: item.category === 'priority' ? NOTIF_TINTS[2] : NOTIF_TINTS[index % NOTIF_TINTS.length],
+    unread: !item.read,
+    link: item.link,
+    category: item.category,
+  });
+
+  private applyBootstrap = (data: BootstrapData, preserveThread = true) => {
+    const threads = data.threads?.threads || [];
+    const active = preserveThread && threads.some(t => t.id === this.state.activeThreadId) ? this.state.activeThreadId : 0;
+    this.setState({
+      threads,
+      activeThreadId: active,
+      people: data.people?.friends || [],
+      notifs: (data.notifications?.items || []).map(this.notification),
+      preferences: data.preferences || {},
+      chirpPrefs: data.chirp || {},
+      loading: false,
+    });
+    const incoming = (data.incoming?.incoming || [])[0];
+    if (incoming) void this.chirp.acceptIncoming(incoming);
+  };
+
+  private hydrate = async () => {
+    this.setState({ loading: true, sendError: '' });
+    try { this.applyBootstrap(await this.transport.bootstrap(), false); }
+    catch (error) { this.setState({ loading: false, sendError: (error as Error).message }); }
+  };
+
+  private refreshSummary = async () => {
+    try { this.applyBootstrap(await this.transport.bootstrap()); } catch { /* next poll retries */ }
+  };
+
+  private openThread = async (thread: ThreadSummary) => {
+    this.transport.setActiveThread(thread.id);
+    this.setState({ activeThreadId: thread.id, thread: [], loading: true, sendError: '', tab: 'messages' });
+    try {
+      const messages = await this.transport.load(thread.id);
+      this.setState({ thread: messages.map(this.wireToThread), loading: false });
+      const last = messages.length ? Number(messages[messages.length - 1].id) : undefined;
+      await this.transport.markRead(thread.id, last);
+      void this.refreshSummary();
+      this.scrollBottom();
+    } catch (error) { this.setState({ loading: false, sendError: (error as Error).message }); }
+  };
+
+  private openPerson = async (person: Person) => {
+    this.setState({ loading: true, sendError: '' });
+    try { await this.openThread(await this.transport.openThread(person.userId)); }
+    catch (error) { this.setState({ loading: false, sendError: (error as Error).message }); }
+  };
+
+  private searchPeople = (value: string) => {
+    this.setState({ search: value });
+    if (this._searchTimer) clearTimeout(this._searchTimer);
+    if (value.trim().length < 2) { this.setState({ searchResults: [] }); return; }
+    this._searchTimer = setTimeout(() => {
+      this.transport.search(value.trim()).then(searchResults => this.setState({ searchResults })).catch(() => this.setState({ searchResults: [] }));
+    }, 240);
+  };
+
+  private chooseFile = () => this._fileInput.current?.click();
+
+  private uploadFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !this.state.activeThreadId) return;
+    this.setState({ uploading: true, sendError: '' });
+    try {
+      const uploaded = await this.transport.upload(file, file.type.startsWith('image/') ? 'image' : 'voice');
+      const message = await this.transport.send(file.name, { media: [uploaded.id], message_type: file.type.startsWith('image/') ? 'image' : 'voice' });
+      this.scrollBottom();
+      this.setState(p => ({ thread: [...p.thread, this.wireToThread(message)], uploading: false }));
+    } catch (error) { this.setState({ uploading: false, sendError: (error as Error).message }); }
+  };
+
+  private markNotification = async (item: Notif) => {
+    this.setState(p => ({ notifs: p.notifs.map(n => n.id === item.id ? { ...n, unread: false } : n) }));
+    if (!item.id.startsWith('demo-')) {
+      try { await this.transport.updateNotification({ action: 'read', id: item.id }); } catch { /* optimistic read can retry later */ }
+    }
+    if (item.link) window.open(item.link, '_top');
+  };
+
+  private toggleFlag = async (flag: 'muted' | 'archived' | 'pinned') => {
+    const thread = this.state.threads.find(t => t.id === this.state.activeThreadId);
+    if (!thread) return;
+    try { await this.transport.setFlags(thread.id, { [flag]: !thread[flag] }); await this.refreshSummary(); }
+    catch (error) { this.setState({ sendError: (error as Error).message }); }
+  };
+
+  private togglePreference = async (key: string) => {
+    const value = this.state.preferences[key] ? 0 : 1;
+    this.setState(p => ({ preferences: { ...p.preferences, [key]: value } }));
+    try { this.setState({ preferences: await this.transport.savePreferences({ [key]: value }) as Record<string, string | number | boolean> }); }
+    catch (error) { this.setState({ sendError: (error as Error).message }); }
+  };
+
+  private toggleChirpPreference = async (key: string) => {
+    const value = this.state.chirpPrefs[key] ? 0 : 1;
+    this.setState(p => ({ chirpPrefs: { ...p.chirpPrefs, [key]: value } }));
+    try { this.setState({ chirpPrefs: await this.transport.saveChirpSettings({ [key]: value }) as Record<string, string | number | boolean> }); }
+    catch (error) { this.setState({ chirpStatus: (error as Error).message }); }
+  };
+
+  private clearActiveHistory = async () => {
+    const id = this.state.activeThreadId;
+    if (!id || !window.confirm('Delete this private conversation history for both people? This cannot be undone.')) return;
+    try { await this.transport.clearHistory(id); this.setState({ thread: [] }); await this.refreshSummary(); }
+    catch (error) { this.setState({ sendError: (error as Error).message }); }
+  };
+
+  private startChirp = async (person: Person) => {
+    this.setState({ chirpStatus: `Connecting live Chirp with ${person.name}…` });
+    try {
+      const session = await this.transport.chirpStart(person.userId);
+      this.setState({ chirpStatus: String(session.decision || '') === 'live' ? `Live Chirp ready with ${person.name}. Hold-to-talk audio is connecting.` : String(session.reason || 'Chirp is unavailable right now.') });
+    } catch (error) { this.setState({ chirpStatus: (error as Error).message }); }
+  };
 
   /** Incoming message (WebSocket in live mode, canned reply in mock). */
   private onIncoming = (m: WireMessage) => {
@@ -217,11 +371,12 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     const seen = s.open && s.slid && s.tab === 'messages';
     this.scrollBottom();
     this.setState(p => ({
-      thread: [...p.thread, this.wireToThread(m)],
+      thread: m.threadId === p.activeThreadId ? [...p.thread, this.wireToThread(m)] : p.thread,
       notifs: seen
         ? p.notifs
         : [
             {
+              id: `message-${m.id}`,
               title: m.from || 'Message',
               text: m.text,
               time: 'now',
@@ -235,7 +390,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   send() {
     const text = this.state.draft.trim();
-    if (!text) return;
+    if (!text || !this.state.activeThreadId) return;
     if (this.state.mode === 'room') {
       this.scrollBottom();
       this.setState(p => ({
@@ -250,7 +405,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       draft: '',
       sendError: '',
       tab: 'messages',
-      thread: [...p.thread, { from: 'me', text }],
+      thread: [...p.thread, { id: `optimistic-${Date.now()}`, from: 'me', text }],
     }));
     this.transport.send(text).catch(err => {
       // roll back the optimistic message, restore the draft for retry
@@ -267,6 +422,9 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   render() {
     const s = this.state;
     const unread = s.notifs.filter(n => n.unread).length;
+    const messageUnread = s.threads.reduce((sum, thread) => sum + (thread.muted ? 0 : thread.unread), 0);
+    const activeThread = s.threads.find(thread => thread.id === s.activeThreadId);
+    const activePerson = activeThread?.people?.[0];
     const vh = s.vh || 900;
     const screen = Math.max(110, Math.min(s.slid ? 200 : 250, vh - (s.slid ? 460 : 200)));
     const acc = ACCENT_OPTS.find(a => a.c === s.accent) || ACCENT_OPTS[0];
@@ -274,7 +432,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     const bgOf = (key: string) => (BG_OPTS.find(b => b.key === key) || BG_OPTS[0]).bg(acc.c);
     const deviceFont = (FONT_OPTS.find(f => f.key === s.font) || FONT_OPTS[0]).stack;
     const openTo = (tab: State['tab']) => () => { this.scrollBottom(); this.setState({ open: true, slid: true, tab }); };
-    const showComposer = (s.mode === 'compose' && s.slid) || s.mode === 'room';
+    const showComposer = (s.mode === 'compose' && s.slid && !!activeThread) || s.mode === 'room';
     const coverVisible = s.mode === 'compose' && !s.slid;
     const callTime = Math.floor(s.callSec / 60) + ':' + String(s.callSec % 60).padStart(2, '0');
     const mono = 'ui-monospace,Menlo,monospace';
@@ -349,7 +507,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                     {/* tabs */}
                     <div style={{ display: 'flex', gap: 4, margin: '8px 12px 10px', padding: 3, borderRadius: 12, background: '#0a1117' }}>
                       {([
-                        { key: 'messages', label: 'Messages', badge: 2 },
+                        { key: 'messages', label: 'Messages', badge: messageUnread },
                         { key: 'chirp', label: 'Chirp', badge: 0 },
                         { key: 'notifs', label: 'Alerts', badge: unread },
                       ] as { key: State['tab']; label: string; badge: number }[]).map(t => (
@@ -367,22 +525,65 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                     <div style={{ height: screen, overflowY: 'auto', padding: '2px 12px 12px', transition: 'height .3s ease' }}>
                       {s.tab === 'messages' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '2px 2px 9px' }}>
-                            <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#00ff88', flex: 'none', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.08)' }}>S</div>
-                            <div>
-                              <div style={{ fontSize: 12.5, fontWeight: 600, color: '#e8edf2' }}>{PEER_NAME}</div>
-                              <div style={{ fontSize: 9.5, color: acc.c }}>online now</div>
-                            </div>
-                          </div>
-                          {s.thread.map((m, i) => m.from === 'me' ? (
-                            <div key={i} style={{ display: 'flex', justifyContent: 'flex-end', animation: 'msgIn .2s ease' }}>
-                              <div style={{ maxWidth: '80%', padding: '8px 12px', borderRadius: '15px 15px 4px 15px', fontSize: 12, lineHeight: 1.5, background: accentGrad, color: acc.fg, boxShadow: `0 3px 10px ${acc.c}2e` }}>{m.text}</div>
-                            </div>
+                          {activeThread ? (
+                            <>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 2px 8px', position: 'sticky', top: 0, zIndex: 4, background: '#04090e' }}>
+                                <button onClick={() => { this.transport.setActiveThread(0); this.setState({ activeThreadId: 0, thread: [] }); }} aria-label="Back to conversations" style={{ border: 0, background: '#111a23', color: acc.c, width: 25, height: 25, borderRadius: 8, cursor: 'pointer' }}>‹</button>
+                                {activePerson?.avatar ? <img src={activePerson.avatar} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover' }} /> : <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: acc.c }}>{(activePerson?.name || activeThread.title || 'M').slice(0, 1)}</div>}
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                  <div style={{ fontSize: 12.5, fontWeight: 600, color: '#e8edf2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activePerson?.name || activeThread.title || `${activeThread.type} thread`}</div>
+                                  <div style={{ fontSize: 9.5, color: activePerson?.presence?.stale ? '#5c6771' : acc.c }}>{activePerson?.presence?.stale ? 'offline' : (activePerson?.presence?.state || activeThread.category)}</div>
+                                </div>
+                                {(['pinned', 'muted', 'archived'] as const).map(flag => <button key={flag} onClick={() => void this.toggleFlag(flag)} title={`${activeThread[flag] ? 'Remove' : 'Set'} ${flag}`} style={{ border: 0, padding: '4px 5px', borderRadius: 6, cursor: 'pointer', background: activeThread[flag] ? acc.c : '#111a23', color: activeThread[flag] ? acc.fg : '#7e8a96', fontSize: 8 }}>{flag[0].toUpperCase()}</button>)}
+                                {activeThread.type === 'dm' && <button onClick={() => void this.clearActiveHistory()} title="Delete private conversation history" style={{ border: 0, padding: '4px 5px', borderRadius: 6, cursor: 'pointer', background: '#241018', color: '#ff5c7a', fontSize: 8 }}>D</button>}
+                              </div>
+                              {activeThread.state === 'request' && (
+                                <div style={{ display: 'flex', gap: 7, padding: '7px', borderRadius: 10, background: '#101820' }}>
+                                  <span style={{ flex: 1, color: '#98a3ad', fontSize: 10 }}>Message request</span>
+                                  <button onClick={() => void this.transport.respondRequest(activeThread.id, 'accept').then(() => this.refreshSummary())} style={{ border: 0, borderRadius: 6, background: acc.c, color: acc.fg, fontSize: 9, cursor: 'pointer' }}>Accept</button>
+                                  <button onClick={() => void this.transport.respondRequest(activeThread.id, 'decline').then(() => { this.setState({ activeThreadId: 0, thread: [] }); void this.refreshSummary(); })} style={{ border: '1px solid #ff5c7a', borderRadius: 6, background: 'transparent', color: '#ff5c7a', fontSize: 9, cursor: 'pointer' }}>Decline</button>
+                                </div>
+                              )}
+                              {s.loading && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center' }}>Loading conversation…</div>}
+                              {s.thread.map((m, i) => m.from === 'me' ? (
+                                <div key={m.id || i} style={{ display: 'flex', justifyContent: 'flex-end', animation: 'msgIn .2s ease' }}>
+                                  <div style={{ maxWidth: '80%', padding: '8px 12px', borderRadius: '15px 15px 4px 15px', fontSize: 12, lineHeight: 1.5, background: accentGrad, color: acc.fg, boxShadow: `0 3px 10px ${acc.c}2e` }}>
+                                    {m.media?.map(media => media.mime.startsWith('image/') ? <img key={media.id} src={media.url} alt="Message attachment" style={{ display: 'block', width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 8, marginBottom: m.text ? 5 : 0 }} /> : <audio key={media.id} controls src={media.url} style={{ width: 190, maxWidth: '100%' }} />)}
+                                    {m.text}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div key={m.id || i} style={{ display: 'flex', justifyContent: 'flex-start', animation: 'msgIn .2s ease' }}>
+                                  <div style={{ maxWidth: '80%', padding: '8px 12px', borderRadius: '15px 15px 15px 4px', fontSize: 12, lineHeight: 1.5, background: '#111a23', color: '#dbe4ec', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05)' }}>
+                                    {m.media?.map(media => media.mime.startsWith('image/') ? <img key={media.id} src={media.url} alt="Message attachment" style={{ display: 'block', width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 8, marginBottom: m.text ? 5 : 0 }} /> : <audio key={media.id} controls src={media.url} style={{ width: 190, maxWidth: '100%' }} />)}
+                                    {m.text}
+                                  </div>
+                                </div>
+                              ))}
+                            </>
                           ) : (
-                            <div key={i} style={{ display: 'flex', justifyContent: 'flex-start', animation: 'msgIn .2s ease' }}>
-                              <div style={{ maxWidth: '80%', padding: '8px 12px', borderRadius: '15px 15px 15px 4px', fontSize: 12, lineHeight: 1.5, background: '#111a23', color: '#dbe4ec', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05)' }}>{m.text}</div>
-                            </div>
-                          ))}
+                            <>
+                              <input value={s.search} onChange={event => this.searchPeople(event.target.value)} placeholder="Search members…" aria-label="Search members" style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #1e2831', borderRadius: 9, padding: '8px 10px', background: '#0a1117', color: '#e8edf2', outline: 'none', fontSize: 11 }} />
+                              {(s.searchResults.length ? s.searchResults : s.people.filter(person => !person.presence?.stale).slice(0, 4)).map(person => (
+                                <button key={`person-${person.userId}`} onClick={() => void this.openPerson(person)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', border: 0, borderRadius: 10, background: '#0a1117', color: '#e8edf2', padding: '7px 9px', cursor: 'pointer', textAlign: 'left' }}>
+                                  {person.avatar ? <img src={person.avatar} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} /> : <span style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', background: '#17242a', color: acc.c }}>{person.name.slice(0, 1)}</span>}
+                                  <span style={{ minWidth: 0, flex: 1 }}><strong style={{ display: 'block', fontSize: 11 }}>{person.name}</strong><small style={{ color: '#7e8a96' }}>@{person.handle}</small></span>
+                                  <span style={{ color: person.presence?.stale ? '#4a545e' : acc.c, fontSize: 9 }}>{person.presence?.stale ? '' : '● live'}</span>
+                                </button>
+                              ))}
+                              <div style={{ fontFamily: mono, fontSize: 8, color: '#5c6771', letterSpacing: 1, paddingTop: 3 }}>CONVERSATIONS</div>
+                              {s.loading && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center' }}>Loading your inbox…</div>}
+                              {s.threads.map(thread => {
+                                const person = thread.people?.[0];
+                                return <button key={thread.id} onClick={() => void this.openThread(thread)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', border: 0, borderRadius: 11, background: thread.unread ? 'linear-gradient(160deg,#0b1620,#081018)' : '#070d13', color: '#e8edf2', padding: '8px 9px', cursor: 'pointer', textAlign: 'left' }}>
+                                  {person?.avatar ? <img src={person.avatar} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} /> : <span style={{ width: 32, height: 32, borderRadius: '50%', display: 'grid', placeItems: 'center', background: '#17242a', color: acc.c }}>{(person?.name || thread.title || thread.type).slice(0, 1).toUpperCase()}</span>}
+                                  <span style={{ minWidth: 0, flex: 1 }}><strong style={{ display: 'block', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person?.name || thread.title || `${thread.type} thread`}</strong><small style={{ display: 'block', color: '#7e8a96', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{thread.last_message.preview || thread.category}</small></span>
+                                  {thread.unread > 0 && <span style={{ minWidth: 17, height: 17, borderRadius: 10, display: 'grid', placeItems: 'center', background: '#ff3b5c', color: '#fff', fontSize: 8 }}>{thread.unread}</span>}
+                                </button>;
+                              })}
+                              {!s.loading && !s.threads.length && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 12 }}>No conversations yet. Choose a friend or search for a member.</div>}
+                            </>
+                          )}
                           {s.sendError && (
                             <div style={{ fontSize: 10, color: '#ff5c7a', textAlign: 'center', padding: '2px 0' }}>{s.sendError}</div>
                           )}
@@ -391,23 +592,30 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
                       {s.tab === 'chirp' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                          {CHIRPS.map((c, i) => (
-                            <div key={i} style={{ padding: '10px 12px', borderRadius: 13, background: 'linear-gradient(160deg,#0a1219 0%,#070d13 100%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.04)' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                                <span style={{ fontSize: 11, fontWeight: 600, color: '#e8edf2' }}>{c.user}</span>
-                                <span style={{ fontFamily: mono, fontSize: 9.5, color: '#00ff88' }}>{c.ticker}</span>
-                                <span style={{ fontFamily: mono, fontSize: 9, color: '#4a545e', marginLeft: 'auto' }}>{c.time}</span>
-                              </div>
-                              <div style={{ fontSize: 11.5, color: '#98a3ad', lineHeight: 1.5 }}>{c.text}</div>
+                          <div style={{ color: '#98a3ad', fontSize: 10.5, lineHeight: 1.45 }}>Live push-to-talk with friends. Chirps are not stored as recordings.</div>
+                          {s.chirpStatus && <div style={{ padding: 8, borderRadius: 9, color: acc.c, background: '#0a1117', fontSize: 10 }}>{s.chirpStatus}</div>}
+                          {s.people.map(person => (
+                            <div key={person.userId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 9px', borderRadius: 11, background: '#0a1117' }}>
+                              {person.avatar ? <img src={person.avatar} alt="" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover' }} /> : <span style={{ width: 30, height: 30, borderRadius: '50%', display: 'grid', placeItems: 'center', background: '#17242a', color: acc.c }}>{person.name.slice(0, 1)}</span>}
+                              <span style={{ flex: 1, minWidth: 0 }}><strong style={{ display: 'block', color: '#e8edf2', fontSize: 11 }}>{person.name}</strong><small style={{ color: person.presence?.stale ? '#5c6771' : acc.c }}>{person.presence?.stale ? 'offline' : (person.presence?.state || 'online')}</small></span>
+                              <button disabled={!person.chirpEnabled}
+                                onPointerDown={event => { event.preventDefault(); event.currentTarget.setPointerCapture?.(event.pointerId); void this.chirp.begin(person.userId); }}
+                                onPointerUp={event => { event.preventDefault(); this.chirp.end(); }}
+                                onPointerCancel={() => this.chirp.end()}
+                                onKeyDown={event => { if ((event.key === ' ' || event.key === 'Enter') && !event.repeat) { event.preventDefault(); event.stopPropagation(); void this.chirp.begin(person.userId); } }}
+                                onKeyUp={event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); this.chirp.end(); } }}
+                                onClick={event => event.preventDefault()} title={person.chirpReason || 'Hold to talk live'} aria-label={`Hold to Chirp ${person.name}`}
+                                style={{ border: 0, borderRadius: 8, padding: '7px 9px', background: person.chirpEnabled ? '#3d8bfd' : '#17242a', color: person.chirpEnabled ? '#fff' : '#66787f', cursor: person.chirpEnabled ? 'pointer' : 'not-allowed', fontSize: 9, touchAction: 'none' }}>Hold Chirp</button>
                             </div>
                           ))}
+                          {!s.people.length && CHIRPS.slice(0, 1).map(c => <div key={c.user} style={{ color: '#7e8a96', fontSize: 10 }}>Your mutual friends will appear here when Chirp is enabled.</div>)}
                         </div>
                       )}
 
                       {s.tab === 'notifs' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                           {s.notifs.map((n, i) => (
-                            <div key={i} onClick={() => this.setState(p => ({ notifs: p.notifs.map((x, j) => j === i ? { ...x, unread: false } : x) }))}
+                            <div key={n.id || i} onClick={() => void this.markNotification(n)}
                               style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '10px 12px', borderRadius: 13, cursor: 'pointer', background: n.unread ? 'linear-gradient(160deg,#0b1620 0%,#081018 100%)' : '#070d13', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.04)' }}>
                               <div style={{ width: 26, height: 26, borderRadius: 8, flex: 'none', background: n.tint, boxShadow: 'inset 0 1px 0 rgba(255,255,255,.25)' }} />
                               <div style={{ minWidth: 0 }}>
@@ -417,6 +625,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               <div style={{ fontFamily: mono, fontSize: 8.5, color: '#4a545e', marginLeft: 'auto', flex: 'none' }}>{n.time}</div>
                             </div>
                           ))}
+                          {!s.notifs.length && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 14 }}>No site alerts. You’re all caught up.</div>}
                         </div>
                       )}
                     </div>
@@ -466,6 +675,10 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                     {/* composer */}
                     {showComposer && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                        {s.mode === 'compose' && <>
+                          <input ref={this._fileInput} type="file" accept="image/jpeg,image/png,image/gif,image/webp,audio/mpeg,audio/mp4,audio/ogg,audio/webm" onChange={event => void this.uploadFile(event)} style={{ display: 'none' }} />
+                          <button onClick={this.chooseFile} disabled={s.uploading} title="Attach an image or audio file" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid #1e2831', background: '#0a1117', color: s.uploading ? '#5c6771' : acc.c, cursor: s.uploading ? 'wait' : 'pointer', flex: 'none' }}>{s.uploading ? '…' : '+'}</button>
+                        </>}
                         <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 2, padding: '10px 13px', borderRadius: 13, background: '#0a1117', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.6)' }}>
                           <span style={{ fontSize: 12, color: s.draft ? '#e8edf2' : '#4a545e', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {s.draft ? s.draft : (s.mode === 'room' ? 'Say something in the room…' : 'Type a message…')}
@@ -631,6 +844,26 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                             <span style={{ position: 'absolute', top: 2, left: s.wmOn ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left .18s' }} />
                           </span>
                         </div>
+                        <div style={{ height: 1, background: '#17212a' }} />
+                        {([
+                          ['read_receipts', 'READ RECEIPTS'],
+                          ['typing_indicator', 'TYPING STATUS'],
+                          ['allow_requests', 'MESSAGE REQUESTS'],
+                        ] as const).map(([key, label]) => (
+                          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ flex: 1, fontFamily: mono, fontSize: 8, letterSpacing: 1.1, color: '#7e8a96' }}>{label}</span>
+                            <button onClick={() => void this.togglePreference(key)} style={{ width: 34, height: 19, padding: 2, border: 0, borderRadius: 10, cursor: 'pointer', background: s.preferences[key] ? acc.c : '#242c34' }}><span style={{ display: 'block', width: 15, height: 15, borderRadius: '50%', background: '#fff', transform: `translateX(${s.preferences[key] ? 15 : 0}px)`, transition: 'transform .18s' }} /></button>
+                          </div>
+                        ))}
+                        {([
+                          ['chirp_enabled', 'CHIRP ENABLED'],
+                          ['dnd', 'CHIRP DO NOT DISTURB'],
+                        ] as const).map(([key, label]) => (
+                          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ flex: 1, fontFamily: mono, fontSize: 8, letterSpacing: 1.1, color: '#7e8a96' }}>{label}</span>
+                            <button onClick={() => void this.toggleChirpPreference(key)} style={{ width: 34, height: 19, padding: 2, border: 0, borderRadius: 10, cursor: 'pointer', background: s.chirpPrefs[key] ? acc.c : '#242c34' }}><span style={{ display: 'block', width: 15, height: 15, borderRadius: '50%', background: '#fff', transform: `translateX(${s.chirpPrefs[key] ? 15 : 0}px)`, transition: 'transform .18s' }} /></button>
+                          </div>
+                        ))}
                       </div>
                     )}
 

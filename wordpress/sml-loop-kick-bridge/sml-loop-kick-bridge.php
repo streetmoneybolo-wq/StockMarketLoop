@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SML LOOP-KICK Bridge
  * Description: Replaces the Loop Messenger launcher with the hosted LOOP-KICK device while preserving the existing messenger as a rollback path.
- * Version: 1.3.1
+ * Version: 1.4.0
  * Author: Stock Market Loop
  */
 
@@ -16,6 +16,7 @@ final class SML_Loop_Kick_Bridge {
 	private const APP_URL = 'https://stockmarketloop-loop-kick.onrender.com/loop-kick/';
 	private const TOKEN_TTL = 12 * HOUR_IN_SECONDS;
 	private const TOKEN_META = 'sml_loop_kick_session_token';
+	private const VERSION = '1.4.0';
 
 	private static string $token = '';
 
@@ -52,7 +53,7 @@ final class SML_Loop_Kick_Bridge {
 		if ( false === $close || false === stripos( $html, '<html' ) ) {
 			return $html;
 		}
-		$src = plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ) . '?ver=1.3.1';
+		$src = plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ) . '?ver=' . self::VERSION;
 		$tag = self::widget_styles()
 			. '<script id="sml-loop-kick-bridge-standalone" data-sml-oh-allow src="' . esc_url( $src ) . '"></script>';
 		return substr( $html, 0, $close ) . $tag . substr( $html, $close );
@@ -66,7 +67,7 @@ final class SML_Loop_Kick_Bridge {
 			'sml-loop-kick-bridge',
 			plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ),
 			array(),
-			'1.3.1',
+			self::VERSION,
 			true
 		);
 	}
@@ -105,7 +106,7 @@ final class SML_Loop_Kick_Bridge {
 		update_user_meta( $user_id, self::TOKEN_META, self::$token );
 		set_transient(
 			'sml_lk_session_' . hash( 'sha256', self::$token ),
-			array( 'userId' => 'wp-' . $user_id ),
+			array( 'userId' => 'wp-' . $user_id, 'wpUserId' => $user_id ),
 			self::TOKEN_TTL
 		);
 		return self::$token;
@@ -149,10 +150,29 @@ final class SML_Loop_Kick_Bridge {
 				),
 			)
 		);
+
+		register_rest_route(
+			'sml-loop-kick/v1',
+			'/gateway',
+			array(
+				'methods'             => array( 'GET', 'POST', 'DELETE' ),
+				'callback'            => array( __CLASS__, 'gateway' ),
+				'permission_callback' => '__return_true',
+			)
+		);
+
+		register_rest_route(
+			'sml-loop-kick/v1',
+			'/upload',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( __CLASS__, 'gateway_upload' ),
+				'permission_callback' => '__return_true',
+			)
+		);
 	}
 
-	public static function verify_session( WP_REST_Request $request ) {
-		$token = (string) $request->get_param( 'token' );
+	private static function identity_for_token( string $token ) {
 		if ( ! preg_match( '/^[a-f0-9]{64}$/', $token ) ) {
 			return new WP_Error( 'sml_lk_invalid_session', 'Invalid session.', array( 'status' => 401 ) );
 		}
@@ -160,7 +180,166 @@ final class SML_Loop_Kick_Bridge {
 		if ( ! is_array( $identity ) || empty( $identity['userId'] ) ) {
 			return new WP_Error( 'sml_lk_expired_session', 'Session expired.', array( 'status' => 401 ) );
 		}
-		$response = rest_ensure_response( array( 'userId' => sanitize_text_field( (string) $identity['userId'] ) ) );
+		$user_id = absint( $identity['wpUserId'] ?? str_replace( 'wp-', '', (string) $identity['userId'] ) );
+		if ( ! $user_id || ! get_userdata( $user_id ) ) {
+			return new WP_Error( 'sml_lk_invalid_user', 'Invalid session user.', array( 'status' => 401 ) );
+		}
+		$identity['wpUserId'] = $user_id;
+		return $identity;
+	}
+
+	private static function request_token( WP_REST_Request $request ): string {
+		$token = (string) $request->get_header( 'x-loop-kick-session' );
+		if ( ! $token ) {
+			$auth = (string) $request->get_header( 'authorization' );
+			if ( preg_match( '/^Bearer\s+([^\s]+)$/i', $auth, $match ) ) {
+				$token = (string) $match[1];
+			}
+		}
+		return $token ?: (string) $request->get_param( 'token' );
+	}
+
+	private static function allowed_route( string $method, string $route ): bool {
+		$rules = array(
+			'GET' => array(
+				'#^/sml-loop/v1/(threads|preferences|poll|chirp/settings|chirp/presence|chirp/incoming)$#',
+				'#^/sml-loop/v1/threads/\d+/messages$#',
+				'#^/sml-loop/v1/chirp/sessions/\d+/signal$#',
+				'#^/sml-mhub/v1/(people|search|notifications)$#',
+			),
+			'POST' => array(
+				'#^/sml-loop/v1/(threads|preferences|chirp/settings|chirp/allow|chirp/presence|chirp/start)$#',
+				'#^/sml-loop/v1/threads/\d+/(messages|read|flags|request)$#',
+				'#^/sml-loop/v1/chirp/sessions/\d+/(signal|end)$#',
+				'#^/sml-mhub/v1/notifications$#',
+			),
+			'DELETE' => array(
+				'#^/sml-loop/v1/threads/\d+/messages$#',
+				'#^/sml-loop/v1/messages/\d+$#',
+			),
+		);
+		foreach ( $rules[ $method ] ?? array() as $pattern ) {
+			if ( preg_match( $pattern, $route ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static function profile( int $user_id ): array {
+		$user = get_userdata( $user_id );
+		if ( ! $user ) {
+			return array( 'userId' => $user_id, 'name' => 'Member #' . $user_id, 'handle' => '', 'avatar' => '' );
+		}
+		$name = function_exists( 'sml_members_handle' ) ? sml_members_handle( $user_id ) : $user->display_name;
+		$handle = function_exists( 'sml_members_public_handle' ) ? sml_members_public_handle( $user_id ) : $user->user_login;
+		$avatar = (string) get_user_meta( $user_id, 'sml_avatar_url', true );
+		if ( ! $avatar ) {
+			$avatar = (string) get_avatar_url( $user_id, array( 'size' => 96 ) );
+		}
+		$presence = class_exists( 'SML_Loop_Presence' ) ? SML_Loop_Presence::get( $user_id ) : array();
+		return array(
+			'userId'     => $user_id,
+			'name'       => sanitize_text_field( (string) $name ),
+			'handle'     => ltrim( sanitize_text_field( (string) $handle ), '@' ),
+			'avatar'     => esc_url_raw( $avatar ),
+			'profileUrl' => esc_url_raw( home_url( '/members/' . $user_id . '/' ) ),
+			'presence'   => array(
+				'state' => sanitize_key( (string) ( $presence['state'] ?? 'offline' ) ),
+				'stale' => ! empty( $presence['stale'] ),
+			),
+		);
+	}
+
+	private static function enrich_threads( $data ): array {
+		if ( ! is_array( $data ) || empty( $data['threads'] ) || ! is_array( $data['threads'] ) ) {
+			return is_array( $data ) ? $data : array();
+		}
+		$profiles = array();
+		foreach ( $data['threads'] as &$thread ) {
+			$thread['people'] = array();
+			foreach ( (array) ( $thread['participants'] ?? array() ) as $participant ) {
+				$user_id = absint( $participant['user_id'] ?? 0 );
+				if ( ! $user_id ) {
+					continue;
+				}
+				if ( ! isset( $profiles[ $user_id ] ) ) {
+					$profiles[ $user_id ] = self::profile( $user_id );
+				}
+				$thread['people'][] = $profiles[ $user_id ];
+			}
+		}
+		unset( $thread );
+		return $data;
+	}
+
+	public static function gateway( WP_REST_Request $request ) {
+		$identity = self::identity_for_token( self::request_token( $request ) );
+		if ( is_wp_error( $identity ) ) {
+			return $identity;
+		}
+
+		$route  = '/' . ltrim( sanitize_text_field( (string) $request->get_param( 'route' ) ), '/' );
+		$method = strtoupper( sanitize_key( (string) ( $request->get_param( 'method' ) ?: $request->get_method() ) ) );
+		if ( ! self::allowed_route( $method, $route ) ) {
+			return new WP_Error( 'sml_lk_route_denied', 'That LOOP-KICK action is not allowed.', array( 'status' => 403 ) );
+		}
+
+		$previous = get_current_user_id();
+		wp_set_current_user( (int) $identity['wpUserId'] );
+		$internal = new WP_REST_Request( $method, $route );
+		$params = 'GET' === $method ? $request->get_param( 'query' ) : $request->get_param( 'payload' );
+		if ( is_array( $params ) ) {
+			$internal->set_query_params( 'GET' === $method ? $params : array() );
+			$internal->set_body_params( 'GET' === $method ? array() : $params );
+		}
+		$response = rest_do_request( $internal );
+		wp_set_current_user( $previous );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+		$data = $response->get_data();
+		if ( 'GET' === $method && '/sml-loop/v1/threads' === $route ) {
+			$data = self::enrich_threads( $data );
+		}
+		$out = rest_ensure_response( $data );
+		$out->set_status( $response->get_status() );
+		$out->header( 'Cache-Control', 'no-store, private' );
+		return $out;
+	}
+
+	public static function gateway_upload( WP_REST_Request $request ) {
+		$identity = self::identity_for_token( self::request_token( $request ) );
+		if ( is_wp_error( $identity ) ) {
+			return $identity;
+		}
+		$files = $request->get_file_params();
+		if ( empty( $files['file'] ) ) {
+			return new WP_Error( 'sml_lk_upload_missing', 'No file arrived.', array( 'status' => 400 ) );
+		}
+		$previous = get_current_user_id();
+		wp_set_current_user( (int) $identity['wpUserId'] );
+		$internal = new WP_REST_Request( 'POST', '/sml-loop/v1/upload' );
+		$internal->set_file_params( array( 'file' => $files['file'] ) );
+		$internal->set_body_params( array( 'purpose' => 'image' === (string) $request->get_param( 'purpose' ) ? 'image' : 'voice' ) );
+		$response = rest_do_request( $internal );
+		wp_set_current_user( $previous );
+		return $response;
+	}
+
+	public static function verify_session( WP_REST_Request $request ) {
+		$identity = self::identity_for_token( (string) $request->get_param( 'token' ) );
+		if ( is_wp_error( $identity ) ) {
+			return $identity;
+		}
+		$response = rest_ensure_response(
+			array(
+				'userId'   => sanitize_text_field( (string) $identity['userId'] ),
+				'wpUserId' => (int) $identity['wpUserId'],
+				'profile'  => self::profile( (int) $identity['wpUserId'] ),
+			)
+		);
 		$response->header( 'Cache-Control', 'no-store, private' );
 		return $response;
 	}
