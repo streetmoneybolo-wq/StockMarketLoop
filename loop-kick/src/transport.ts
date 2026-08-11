@@ -36,6 +36,9 @@ interface LoopKickConfig {
   transport?: 'mock' | 'live';
   socketUrl?: string;
   endpoints?: { messages?: string; send?: string };
+  sessionToken?: string;
+  peerId?: string;
+  peerName?: string;
 }
 
 declare global {
@@ -107,11 +110,14 @@ function mockTransport(): Transport {
 function liveTransport(cfg: LoopKickConfig): Transport {
   const endpoints = { ...DEFAULTS, ...(cfg.endpoints || {}) };
   let socket: WebSocket | null = null;
+  const headers = (): HeadersInit => cfg.sessionToken
+    ? { Authorization: `Bearer ${cfg.sessionToken}`, 'X-Loop-Peer-Id': cfg.peerId || 'loop' }
+    : { 'X-Loop-Peer-Id': cfg.peerId || 'loop' };
 
   return {
     name: 'live',
     load: async () => {
-      const r = await fetch(endpoints.messages);
+      const r = await fetch(endpoints.messages, { headers: headers() });
       if (!r.ok) throw new Error('Messages endpoint returned ' + r.status);
       const d = await r.json();
       return (d && d.messages) || [];
@@ -119,17 +125,20 @@ function liveTransport(cfg: LoopKickConfig): Transport {
     send: async (text) => {
       const r = await fetch(endpoints.send, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...headers(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: text }),
       });
       if (!r.ok) throw new Error('Send failed (' + r.status + ')');
       return r.json();
     },
     connect: (cb) => {
-      const url =
+      const rawUrl =
         cfg.socketUrl ||
         (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
       try {
+        const url = new URL(rawUrl, location.href);
+        if (cfg.sessionToken) url.searchParams.set('session', cfg.sessionToken);
+        url.searchParams.set('peer', cfg.peerId || 'loop');
         socket = new WebSocket(url);
         socket.onmessage = (ev) => {
           try {
