@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SML LOOP-KICK Bridge
  * Description: Replaces the Loop Messenger launcher with the hosted LOOP-KICK device while preserving the existing messenger as a rollback path.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Stock Market Loop
  */
 
@@ -20,9 +20,18 @@ final class SML_Loop_Kick_Bridge {
 
 	public static function boot(): void {
 		add_filter( 'option_sml_loop_messages_url', array( __CLASS__, 'launcher_url' ), 99 );
+		add_filter( 'default_option_sml_loop_messages_url', array( __CLASS__, 'launcher_url' ), 99 );
+		add_filter( 'gettext_sml-loop-messenger', array( __CLASS__, 'messenger_text' ), 10, 3 );
 		add_action( 'admin_bar_menu', array( __CLASS__, 'admin_bar' ), 999 );
 		add_action( 'wp_footer', array( __CLASS__, 'finish_launcher' ), 100 );
 		add_action( 'rest_api_init', array( __CLASS__, 'routes' ) );
+	}
+
+	public static function messenger_text( string $translation, string $text, string $domain ): string {
+		if ( 'Messages' === $text ) {
+			return 'LOOP-KICK';
+		}
+		return $translation;
 	}
 
 	private static function token(): string {
