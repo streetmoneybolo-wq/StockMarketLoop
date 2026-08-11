@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SML LOOP-KICK Bridge
  * Description: Replaces the Loop Messenger launcher with the hosted LOOP-KICK device while preserving the existing messenger as a rollback path.
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: Stock Market Loop
  */
 
@@ -15,6 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class SML_Loop_Kick_Bridge {
 	private const APP_URL = 'https://stockmarketloop-loop-kick.onrender.com/loop-kick/';
 	private const TOKEN_TTL = 12 * HOUR_IN_SECONDS;
+	private const TOKEN_META = 'sml_loop_kick_session_token';
 
 	private static string $token = '';
 
@@ -25,6 +26,7 @@ final class SML_Loop_Kick_Bridge {
 		add_action( 'admin_bar_menu', array( __CLASS__, 'admin_bar' ), 999 );
 		add_action( 'wp_footer', array( __CLASS__, 'finish_launcher' ), 100 );
 		add_action( 'rest_api_init', array( __CLASS__, 'routes' ) );
+		add_action( 'wp_logout', array( __CLASS__, 'revoke_session' ) );
 	}
 
 	public static function messenger_text( string $translation, string $text, string $domain ): string {
@@ -39,13 +41,33 @@ final class SML_Loop_Kick_Bridge {
 			return self::$token;
 		}
 
+		$user_id = get_current_user_id();
+		$saved   = (string) get_user_meta( $user_id, self::TOKEN_META, true );
+		if ( preg_match( '/^[a-f0-9]{64}$/', $saved ) ) {
+			$identity = get_transient( 'sml_lk_session_' . hash( 'sha256', $saved ) );
+			if ( is_array( $identity ) && ( $identity['userId'] ?? '' ) === 'wp-' . $user_id ) {
+				self::$token = $saved;
+				return self::$token;
+			}
+		}
+
 		self::$token = bin2hex( random_bytes( 32 ) );
+		update_user_meta( $user_id, self::TOKEN_META, self::$token );
 		set_transient(
 			'sml_lk_session_' . hash( 'sha256', self::$token ),
-			array( 'userId' => 'wp-' . get_current_user_id() ),
+			array( 'userId' => 'wp-' . $user_id ),
 			self::TOKEN_TTL
 		);
 		return self::$token;
+	}
+
+	public static function revoke_session( int $user_id ): void {
+		$token = (string) get_user_meta( $user_id, self::TOKEN_META, true );
+		if ( preg_match( '/^[a-f0-9]{64}$/', $token ) ) {
+			delete_transient( 'sml_lk_session_' . hash( 'sha256', $token ) );
+		}
+		delete_user_meta( $user_id, self::TOKEN_META );
+		self::$token = '';
 	}
 
 	public static function launcher_url( $stored ): string {
