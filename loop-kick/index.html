@@ -7,6 +7,16 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      window.LOOP_KICK_CONFIG = {
+        transport: "live",
+        socketUrl: `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`,
+        endpoints: {
+          messages: "/api/messages",
+          send: "/api/messages/send",
+        },
+      };
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
