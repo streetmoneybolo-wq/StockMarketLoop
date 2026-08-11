@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SML LOOP-KICK Bridge
  * Description: Replaces the Loop Messenger launcher with the hosted LOOP-KICK device while preserving the existing messenger as a rollback path.
- * Version: 1.4.0
+ * Version: 1.4.5
  * Author: Stock Market Loop
  */
 
@@ -16,7 +16,7 @@ final class SML_Loop_Kick_Bridge {
 	private const APP_URL = 'https://stockmarketloop-loop-kick.onrender.com/loop-kick/';
 	private const TOKEN_TTL = 12 * HOUR_IN_SECONDS;
 	private const TOKEN_META = 'sml_loop_kick_session_token';
-	private const VERSION = '1.4.0';
+	private const VERSION = '1.4.5';
 
 	private static string $token = '';
 
@@ -375,11 +375,32 @@ final class SML_Loop_Kick_Bridge {
 
 	private static function widget_styles(): string {
 		return '<style id="sml-loop-kick-bridge-css">'
-			. '#sml-loop-popup{background:transparent!important;pointer-events:none!important}'
+			. '#sml-loop-popup{background:none!important;background-color:transparent!important;'
+			. 'background-image:none!important;border:0!important;box-shadow:none!important;'
+			. 'backdrop-filter:none!important;filter:none!important;color-scheme:dark!important;'
+			. 'pointer-events:none!important}'
 			. '#sml-loop-popup-inner{width:min(430px,100vw)!important;height:min(790px,100dvh)!important;'
-			. 'background:transparent!important;box-shadow:none!important;border-radius:0!important;'
+			. 'background:none!important;background-color:transparent!important;background-image:none!important;'
+			. 'border:0!important;box-shadow:none!important;backdrop-filter:none!important;filter:none!important;'
+			. 'border-radius:0!important;color-scheme:dark!important;'
 			. 'overflow:visible!important;pointer-events:auto!important}'
-			. '#sml-loop-popup-frame{background:transparent!important}'
+			. '#sml-loop-popup-frame{display:block!important;background:#020806!important;'
+			. 'background-color:#020806!important;background-image:none!important;border:0!important;'
+			. 'box-shadow:none!important;color-scheme:dark!important;transition:opacity .16s ease!important;'
+			. '-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27 preserveAspectRatio=%27none%27%3E%3Crect x=%2711.7%27 y=%2719.2%27 width=%2781.7%27 height=%2740.4%27 rx=%277%27 ry=%273.8%27 fill=%27white%27/%3E%3Crect x=%2713.5%27 y=%2760.6%27 width=%2778%27 height=%2736.5%27 rx=%276.1%27 ry=%273.3%27 fill=%27white%27/%3E%3C/svg%3E")!important;'
+			. 'mask-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27 preserveAspectRatio=%27none%27%3E%3Crect x=%2711.7%27 y=%2719.2%27 width=%2781.7%27 height=%2740.4%27 rx=%277%27 ry=%273.8%27 fill=%27white%27/%3E%3Crect x=%2713.5%27 y=%2760.6%27 width=%2778%27 height=%2736.5%27 rx=%276.1%27 ry=%273.3%27 fill=%27white%27/%3E%3C/svg%3E")!important;'
+			. '-webkit-mask-position:0 0!important;mask-position:0 0!important;'
+			. '-webkit-mask-size:100% 100%!important;mask-size:100% 100%!important;'
+			. '-webkit-mask-repeat:no-repeat!important;mask-repeat:no-repeat!important}'
+			. '#sml-loop-popup::before,#sml-loop-popup::after,#sml-loop-popup-inner::before,'
+			. '#sml-loop-popup-inner::after,#sml-loop-popup-frame::before,#sml-loop-popup-frame::after{'
+			. 'content:none!important;display:none!important;background:none!important;border:0!important;'
+			. 'box-shadow:none!important;backdrop-filter:none!important}'
+			. '#sml-loop-popup::backdrop{background:transparent!important;backdrop-filter:none!important}'
+			. '#sml-loop-popup.sml-loop-kick-loading #sml-loop-popup-frame{'
+			. 'opacity:0!important;visibility:hidden!important}'
+			. '#sml-loop-popup.sml-loop-kick-ready #sml-loop-popup-frame{'
+			. 'opacity:1!important;visibility:visible!important}'
 			. '[data-sml-loop-popup-close]{display:none!important}'
 			. '</style>';
 	}

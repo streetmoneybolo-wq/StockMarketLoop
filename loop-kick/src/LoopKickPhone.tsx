@@ -154,6 +154,10 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   private _searchTimer: ReturnType<typeof setTimeout> | null = null;
   private _chirpTimer: ReturnType<typeof setInterval> | null = null;
   private _fileInput = React.createRef<HTMLInputElement>();
+  private _dockSurface = React.createRef<HTMLDivElement>();
+  private _topSurface = React.createRef<HTMLDivElement>();
+  private _bottomSurface = React.createRef<HTMLDivElement>();
+  private _surfaceTimers: Array<ReturnType<typeof setTimeout>> = [];
   private _key = (e: KeyboardEvent) => {
     if (!this.state.open) return;
     const tag = (e.target as HTMLElement | null)?.tagName;
@@ -168,9 +172,64 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   };
   private _resize = () => this.setState({ vh: window.innerHeight });
 
+  private publishEmbedSurface = () => {
+    if (window.parent === window) return;
+
+    const surface = !this.state.open ? 'closed' : this.state.slid ? 'expanded' : 'folded';
+    const nodes = !this.state.open
+      ? [{ node: this._dockSurface.current, radius: 16 }]
+      : this.state.slid
+        ? [
+            { node: this._topSurface.current, radius: 30 },
+            { node: this._bottomSurface.current, radius: 26 },
+          ]
+        : [{ node: this._bottomSurface.current, radius: 26 }];
+    const surfaces = nodes.flatMap(({ node, radius }) => {
+      if (!node) return [];
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return [];
+      return [{
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+        radius,
+      }];
+    });
+
+    let targetOrigin = '*';
+    try {
+      if (document.referrer) targetOrigin = new URL(document.referrer).origin;
+    } catch {
+      targetOrigin = '*';
+    }
+
+    window.parent.postMessage({
+      type: 'sml-loop-kick:surface',
+      version: 1,
+      surface,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      surfaces,
+    }, targetOrigin);
+  };
+
+  private scheduleEmbedSurface = () => {
+    this._surfaceTimers.forEach(timer => clearTimeout(timer));
+    this._surfaceTimers = [0, 60, 140, 260, 430, 520].map(delay => (
+      setTimeout(this.publishEmbedSurface, delay)
+    ));
+  };
+
   scrollBottom() { this._wantScroll = true; }
 
-  componentDidUpdate() {
+  componentDidUpdate(_previousProps: Props, previousState: State) {
+    if (
+      previousState.open !== this.state.open
+      || previousState.slid !== this.state.slid
+      || previousState.vh !== this.state.vh
+    ) {
+      this.scheduleEmbedSurface();
+    }
     if (!this._wantScroll) return;
     this._wantScroll = false;
     const pin = () => {
@@ -187,6 +246,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   componentDidMount() {
     window.addEventListener('resize', this._resize);
     window.addEventListener('keydown', this._key);
+    this.scheduleEmbedSurface();
 
     /* ---- the existing StockMarketLoop messenger is the source of truth ---- */
     void this.hydrate().finally(() => this.transport.connect(this.onIncoming, () => void this.refreshSummary()));
@@ -227,6 +287,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (this._interval) clearInterval(this._interval);
     if (this._searchTimer) clearTimeout(this._searchTimer);
     if (this._chirpTimer) clearInterval(this._chirpTimer);
+    this._surfaceTimers.forEach(timer => clearTimeout(timer));
+    this._surfaceTimers = [];
     void this.chirp.close(true);
     this.transport.disconnect();
   }
@@ -450,7 +512,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     return (
       <>
         {/* ---- dock ---- */}
-        <div onClick={() => { this.scrollBottom(); this.setState(p => ({ open: !p.open })); }}
+        <div ref={this._dockSurface} onClick={() => { this.scrollBottom(); this.setState(p => ({ open: !p.open })); }}
           style={{ position: 'fixed', right: 26, bottom: 26, zIndex: 70, display: s.open ? 'none' : 'flex', alignItems: 'center', gap: 11, padding: '12px 18px 12px 14px', borderRadius: 16, cursor: 'pointer', background: 'linear-gradient(155deg,#161c22 0%,#0a0d10 100%)', border: '1px solid #2a333c', boxShadow: '0 14px 34px rgba(0,0,0,.6)', animation: 'kickPulse 2.6s ease-in-out infinite' }}>
           <div style={{ width: 34, height: 24, borderRadius: 5, background: '#05080a', border: '1px solid #00ff8866', boxShadow: 'inset 0 0 10px #00ff8830', position: 'relative', flex: 'none' }}>
             <span style={{ position: 'absolute', left: 4, right: 4, top: 5, height: 2, borderRadius: 2, background: '#00ff88' }} />
@@ -472,7 +534,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
             {/* ---- top fold ---- */}
             <div style={{ height: s.slid ? screen + 148 : 0, overflow: 'visible', transition: 'height .42s cubic-bezier(.2,.8,.25,1)', display: 'flex', alignItems: 'flex-end' }}>
-              <div style={{ width: 352, position: 'relative', borderRadius: 30, padding: 3, background: 'linear-gradient(150deg,#5c6771 0%,#20262d 22%,#0c0f13 50%,#2a323c 80%, #48515c 100%)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,.35)', zIndex: 2, transformOrigin: 'center bottom', transform: s.slid ? 'rotateX(0deg)' : 'rotateX(-89deg)', opacity: s.slid ? 1 : 0, pointerEvents: s.slid ? 'auto' : 'none', transition: 'transform .42s cubic-bezier(.2,.8,.25,1), opacity .32s ease' }}>
+              <div ref={this._topSurface} style={{ width: 352, position: 'relative', borderRadius: 30, padding: 3, background: 'linear-gradient(150deg,#5c6771 0%,#20262d 22%,#0c0f13 50%,#2a323c 80%, #48515c 100%)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,.35)', zIndex: 2, transformOrigin: 'center bottom', transform: s.slid ? 'rotateX(0deg)' : 'rotateX(-89deg)', opacity: s.slid ? 1 : 0, pointerEvents: s.slid ? 'auto' : 'none', transition: 'transform .42s cubic-bezier(.2,.8,.25,1), opacity .32s ease' }}>
                 <div style={{ position: 'absolute', right: -3, top: 70, width: 4, height: 52, borderRadius: '0 3px 3px 0', background: acc.c, boxShadow: `1px 0 3px ${acc.c}66` }} />
                 <div style={{ position: 'absolute', right: -3, top: 134, width: 4, height: 70, borderRadius: '0 3px 3px 0', background: 'linear-gradient(#39424c,#12161b)' }} />
                 <div style={{ position: 'absolute', left: -3, top: 92, width: 4, height: 40, borderRadius: '3px 0 0 3px', background: 'linear-gradient(#39424c,#12161b)' }} />
@@ -640,7 +702,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
             </div>
 
             {/* ---- deck ---- */}
-            <div style={{ width: 330, transformOrigin: 'top center', transform: 'rotateX(0deg)', opacity: 1, transition: 'transform .42s cubic-bezier(.2,.8,.25,1), opacity .3s ease', borderRadius: 26, padding: 3, background: 'linear-gradient(210deg,#4c555f 0%,#1b2127 25%,#0b0e12 55%,#2c343d 100%)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,.28)', pointerEvents: 'auto' }}>
+            <div ref={this._bottomSurface} style={{ width: 330, transformOrigin: 'top center', transform: 'rotateX(0deg)', opacity: 1, transition: 'transform .42s cubic-bezier(.2,.8,.25,1), opacity .3s ease', borderRadius: 26, padding: 3, background: 'linear-gradient(210deg,#4c555f 0%,#1b2127 25%,#0b0e12 55%,#2c343d 100%)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,.28)', pointerEvents: 'auto' }}>
               <div style={{ borderRadius: 23, background: '#010304', padding: 10, position: 'relative', overflow: 'hidden' }}>
                 <div style={{ position: 'absolute', inset: 0, borderRadius: 23, background: 'linear-gradient(295deg, rgba(255,255,255,.07) 0%, transparent 30%, transparent 72%, rgba(255,255,255,.04) 100%)', pointerEvents: 'none', zIndex: 6 }} />
 
