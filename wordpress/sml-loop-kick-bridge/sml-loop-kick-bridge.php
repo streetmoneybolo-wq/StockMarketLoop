@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SML LOOP-KICK Bridge
  * Description: Replaces the Loop Messenger launcher with the hosted LOOP-KICK device while preserving the existing messenger as a rollback path.
- * Version: 1.1.2
+ * Version: 1.2.0
  * Author: Stock Market Loop
  */
 
@@ -25,11 +25,36 @@ final class SML_Loop_Kick_Bridge {
 		add_filter( 'gettext_sml-loop-messenger', array( __CLASS__, 'messenger_text' ), 10, 3 );
 		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'enqueue' ), 9999 );
 		add_action( 'admin_enqueue_scripts', array( __CLASS__, 'enqueue' ), 9999 );
+		add_action( 'template_redirect', array( __CLASS__, 'start_standalone_buffer' ), -1999999 );
 		add_action( 'admin_bar_menu', array( __CLASS__, 'admin_bar' ), 999 );
 		add_action( 'wp_footer', array( __CLASS__, 'finish_launcher' ), 100 );
 		add_action( 'admin_footer', array( __CLASS__, 'admin_surface' ), 100 );
 		add_action( 'rest_api_init', array( __CLASS__, 'routes' ) );
 		add_action( 'wp_logout', array( __CLASS__, 'revoke_session' ) );
+	}
+
+	public static function start_standalone_buffer(): void {
+		if ( is_admin() || ! is_user_logged_in() || wp_doing_ajax()
+			|| ( defined( 'REST_REQUEST' ) && REST_REQUEST ) || wp_doing_cron() ) {
+			return;
+		}
+		if ( isset( $_SERVER['REQUEST_METHOD'] ) && 'GET' !== strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) ) {
+			return;
+		}
+		ob_start( array( __CLASS__, 'inject_standalone_controller' ) );
+	}
+
+	public static function inject_standalone_controller( $html ): string {
+		if ( ! is_string( $html ) || false !== strpos( $html, 'sml-loop-kick-bridge.js' ) ) {
+			return is_string( $html ) ? $html : '';
+		}
+		$close = strripos( $html, '</body>' );
+		if ( false === $close || false === stripos( $html, '<html' ) ) {
+			return $html;
+		}
+		$src = plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ) . '?ver=1.2.0';
+		$tag = '<script id="sml-loop-kick-bridge-standalone" data-sml-oh-allow src="' . esc_url( $src ) . '"></script>';
+		return substr( $html, 0, $close ) . $tag . substr( $html, $close );
 	}
 
 	public static function enqueue(): void {
@@ -40,7 +65,7 @@ final class SML_Loop_Kick_Bridge {
 			'sml-loop-kick-bridge',
 			plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ),
 			array(),
-			'1.1.2',
+			'1.2.0',
 			true
 		);
 	}
