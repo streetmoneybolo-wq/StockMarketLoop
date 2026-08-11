@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SML LOOP-KICK Bridge
  * Description: Replaces the Loop Messenger launcher with the hosted LOOP-KICK device while preserving the existing messenger as a rollback path.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: Stock Market Loop
  */
 
@@ -52,7 +52,7 @@ final class SML_Loop_Kick_Bridge {
 		if ( false === $close || false === stripos( $html, '<html' ) ) {
 			return $html;
 		}
-		$src = plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ) . '?ver=1.2.0';
+		$src = plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ) . '?ver=1.3.0';
 		$tag = '<script id="sml-loop-kick-bridge-standalone" data-sml-oh-allow src="' . esc_url( $src ) . '"></script>';
 		return substr( $html, 0, $close ) . $tag . substr( $html, $close );
 	}
@@ -65,7 +65,7 @@ final class SML_Loop_Kick_Bridge {
 			'sml-loop-kick-bridge',
 			plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ),
 			array(),
-			'1.2.0',
+			'1.3.0',
 			true
 		);
 	}
@@ -192,7 +192,12 @@ final class SML_Loop_Kick_Bridge {
 		}
 		?>
 		<style id="sml-loop-kick-bridge-css">
-		#sml-loop-popup-inner{width:min(520px,100vw)!important;background:#07090b!important}
+		#sml-loop-popup{background:transparent!important;pointer-events:none!important}
+		#sml-loop-popup-inner{width:min(430px,100vw)!important;height:min(790px,100dvh)!important;
+		background:transparent!important;box-shadow:none!important;border-radius:0!important;
+		overflow:visible!important;pointer-events:auto!important}
+		#sml-loop-popup-frame{background:transparent!important}
+		[data-sml-loop-popup-close]{display:none!important}
 		</style>
 		<?php
 	}

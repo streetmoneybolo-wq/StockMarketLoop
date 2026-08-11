@@ -23,7 +23,7 @@ export default function App() {
 
   if (embed) {
     return (
-      <div style={{ minHeight: '100vh', overflow: 'hidden', background: '#07090b' }}>
+      <div style={{ minHeight: '100vh', overflow: 'hidden', background: 'transparent' }}>
         <LoopKickPhone ref={phone} initialOpen />
       </div>
     );
