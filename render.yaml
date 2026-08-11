@@ -6,10 +6,12 @@ services:
     region: ohio
     rootDir: loop-kick
     buildCommand: pnpm install --frozen-lockfile && pnpm build
-    startCommand: pnpm server
+    startCommand: node server/index.mjs
     healthCheckPath: /api/health
     autoDeployTrigger: commit
     envVars:
+      - key: NODE_VERSION
+        value: 22.22.0
       - key: NODE_ENV
         value: production
       - key: LOOP_KICK_DB_PATH
