@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SML LOOP-KICK Bridge
  * Description: Replaces the Loop Messenger launcher with the hosted LOOP-KICK device while preserving the existing messenger as a rollback path.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: Stock Market Loop
  */
 
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class SML_Loop_Kick_Bridge {
-	private const APP_URL = 'https://stockmarketloop-loop-kick.onrender.com/';
+	private const APP_URL = 'https://stockmarketloop-loop-kick.onrender.com/loop-kick/';
 	private const TOKEN_TTL = 12 * HOUR_IN_SECONDS;
 
 	private static string $token = '';
