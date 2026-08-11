@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SML LOOP-KICK Bridge
  * Description: Replaces the Loop Messenger launcher with the hosted LOOP-KICK device while preserving the existing messenger as a rollback path.
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: Stock Market Loop
  */
 
@@ -23,11 +23,26 @@ final class SML_Loop_Kick_Bridge {
 		add_filter( 'option_sml_loop_messages_url', array( __CLASS__, 'launcher_url' ), 99 );
 		add_filter( 'default_option_sml_loop_messages_url', array( __CLASS__, 'launcher_url' ), 99 );
 		add_filter( 'gettext_sml-loop-messenger', array( __CLASS__, 'messenger_text' ), 10, 3 );
+		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'enqueue' ), 9999 );
+		add_action( 'admin_enqueue_scripts', array( __CLASS__, 'enqueue' ), 9999 );
 		add_action( 'admin_bar_menu', array( __CLASS__, 'admin_bar' ), 999 );
 		add_action( 'wp_footer', array( __CLASS__, 'finish_launcher' ), 100 );
 		add_action( 'admin_footer', array( __CLASS__, 'admin_surface' ), 100 );
 		add_action( 'rest_api_init', array( __CLASS__, 'routes' ) );
 		add_action( 'wp_logout', array( __CLASS__, 'revoke_session' ) );
+	}
+
+	public static function enqueue(): void {
+		if ( ! is_user_logged_in() ) {
+			return;
+		}
+		wp_enqueue_script(
+			'sml-loop-kick-bridge',
+			plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ),
+			array(),
+			'1.1.2',
+			true
+		);
 	}
 
 	public static function admin_surface(): void {
@@ -151,7 +166,6 @@ final class SML_Loop_Kick_Bridge {
 			return;
 		}
 		?>
-		<script id="sml-loop-kick-bridge-js" src="<?php echo esc_url( plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ) ); ?>?ver=1.1.1"></script>
 		<style id="sml-loop-kick-bridge-css">
 		#sml-loop-popup-inner{width:min(520px,100vw)!important;background:#07090b!important}
 		</style>
