@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SML LOOP-KICK Bridge
  * Description: Replaces the Loop Messenger launcher with the hosted LOOP-KICK device while preserving the existing messenger as a rollback path.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: Stock Market Loop
  */
 
@@ -151,7 +151,7 @@ final class SML_Loop_Kick_Bridge {
 			return;
 		}
 		?>
-		<script id="sml-loop-kick-bridge-js" src="<?php echo esc_url( plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ) ); ?>?ver=1.1.0"></script>
+		<script id="sml-loop-kick-bridge-js" src="<?php echo esc_url( plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ) ); ?>?ver=1.1.1"></script>
 		<style id="sml-loop-kick-bridge-css">
 		#sml-loop-popup-inner{width:min(520px,100vw)!important;background:#07090b!important}
 		</style>
