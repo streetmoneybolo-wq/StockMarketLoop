@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SML LOOP-KICK Bridge
  * Description: Replaces the Loop Messenger launcher with the hosted LOOP-KICK device while preserving the existing messenger as a rollback path.
- * Version: 1.3.0
+ * Version: 1.3.1
  * Author: Stock Market Loop
  */
 
@@ -52,8 +52,9 @@ final class SML_Loop_Kick_Bridge {
 		if ( false === $close || false === stripos( $html, '<html' ) ) {
 			return $html;
 		}
-		$src = plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ) . '?ver=1.3.0';
-		$tag = '<script id="sml-loop-kick-bridge-standalone" data-sml-oh-allow src="' . esc_url( $src ) . '"></script>';
+		$src = plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ) . '?ver=1.3.1';
+		$tag = self::widget_styles()
+			. '<script id="sml-loop-kick-bridge-standalone" data-sml-oh-allow src="' . esc_url( $src ) . '"></script>';
 		return substr( $html, 0, $close ) . $tag . substr( $html, $close );
 	}
 
@@ -65,7 +66,7 @@ final class SML_Loop_Kick_Bridge {
 			'sml-loop-kick-bridge',
 			plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ),
 			array(),
-			'1.3.0',
+			'1.3.1',
 			true
 		);
 	}
@@ -190,16 +191,18 @@ final class SML_Loop_Kick_Bridge {
 		if ( ! is_user_logged_in() ) {
 			return;
 		}
-		?>
-		<style id="sml-loop-kick-bridge-css">
-		#sml-loop-popup{background:transparent!important;pointer-events:none!important}
-		#sml-loop-popup-inner{width:min(430px,100vw)!important;height:min(790px,100dvh)!important;
-		background:transparent!important;box-shadow:none!important;border-radius:0!important;
-		overflow:visible!important;pointer-events:auto!important}
-		#sml-loop-popup-frame{background:transparent!important}
-		[data-sml-loop-popup-close]{display:none!important}
-		</style>
-		<?php
+		echo self::widget_styles(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+	}
+
+	private static function widget_styles(): string {
+		return '<style id="sml-loop-kick-bridge-css">'
+			. '#sml-loop-popup{background:transparent!important;pointer-events:none!important}'
+			. '#sml-loop-popup-inner{width:min(430px,100vw)!important;height:min(790px,100dvh)!important;'
+			. 'background:transparent!important;box-shadow:none!important;border-radius:0!important;'
+			. 'overflow:visible!important;pointer-events:auto!important}'
+			. '#sml-loop-popup-frame{background:transparent!important}'
+			. '[data-sml-loop-popup-close]{display:none!important}'
+			. '</style>';
 	}
 }
 
