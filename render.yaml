@@ -5,7 +5,7 @@ services:
     plan: starter
     region: ohio
     rootDir: loop-kick
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
     startCommand: pnpm server
     healthCheckPath: /api/health
     autoDeployTrigger: commit
