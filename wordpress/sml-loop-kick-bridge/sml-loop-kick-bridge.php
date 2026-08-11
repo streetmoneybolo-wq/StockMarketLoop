@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SML LOOP-KICK Bridge
  * Description: Replaces the Loop Messenger launcher with the hosted LOOP-KICK device while preserving the existing messenger as a rollback path.
- * Version: 1.0.3
+ * Version: 1.1.0
  * Author: Stock Market Loop
  */
 
@@ -25,8 +25,17 @@ final class SML_Loop_Kick_Bridge {
 		add_filter( 'gettext_sml-loop-messenger', array( __CLASS__, 'messenger_text' ), 10, 3 );
 		add_action( 'admin_bar_menu', array( __CLASS__, 'admin_bar' ), 999 );
 		add_action( 'wp_footer', array( __CLASS__, 'finish_launcher' ), 100 );
+		add_action( 'admin_footer', array( __CLASS__, 'admin_surface' ), 100 );
 		add_action( 'rest_api_init', array( __CLASS__, 'routes' ) );
 		add_action( 'wp_logout', array( __CLASS__, 'revoke_session' ) );
+	}
+
+	public static function admin_surface(): void {
+		if ( ! is_user_logged_in() || ! class_exists( 'SML_Loop_Entry' ) ) {
+			return;
+		}
+		SML_Loop_Entry::popup();
+		self::finish_launcher();
 	}
 
 	public static function messenger_text( string $translation, string $text, string $domain ): string {
@@ -71,7 +80,7 @@ final class SML_Loop_Kick_Bridge {
 	}
 
 	public static function launcher_url( $stored ): string {
-		if ( is_admin() || ! is_user_logged_in() ) {
+		if ( ! is_user_logged_in() ) {
 			return is_string( $stored ) ? $stored : '';
 		}
 
@@ -142,20 +151,7 @@ final class SML_Loop_Kick_Bridge {
 			return;
 		}
 		?>
-		<script id="sml-loop-kick-bridge-js">
-		(function () {
-			var launcher = document.querySelector('[data-sml-loop-launcher]');
-			var label = launcher && launcher.querySelector('.sml-loop-launcher-label');
-			if (label) label.textContent = 'LOOP-KICK';
-			if (launcher) launcher.setAttribute('aria-label', 'Open LOOP-KICK');
-			var popup = document.getElementById('sml-loop-popup');
-			if (popup) popup.setAttribute('aria-label', 'LOOP-KICK');
-			var frame = document.getElementById('sml-loop-popup-frame');
-			if (frame) frame.title = 'LOOP-KICK';
-			var close = document.querySelector('[data-sml-loop-popup-close]');
-			if (close) close.setAttribute('aria-label', 'Close LOOP-KICK');
-		}());
-		</script>
+		<script id="sml-loop-kick-bridge-js" src="<?php echo esc_url( plugins_url( 'assets/loop-kick-bridge.js', __FILE__ ) ); ?>?ver=1.1.0"></script>
 		<style id="sml-loop-kick-bridge-css">
 		#sml-loop-popup-inner{width:min(520px,100vw)!important;background:#07090b!important}
 		</style>
