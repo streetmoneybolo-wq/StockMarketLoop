@@ -1,0 +1,11 @@
+allowBuilds:
+  '@parcel/watcher': false
+  '@swc/core': false
+  better-sqlite3: true
+  lmdb: false
+  msgpackr-extract: false
+onlyBuiltDependencies:
+  - "@parcel/watcher"
+  - "@swc/core"
+  - lmdb
+  - msgpackr-extract
