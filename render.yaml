@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: stockmarketloop-loop-kick
+    runtime: node
+    plan: starter
+    region: ohio
+    rootDir: loop-kick
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm server
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOOP_KICK_DB_PATH
+        value: /var/data/loop-kick.sqlite
+    disk:
+      name: loop-kick-data
+      mountPath: /var/data
+      sizeGB: 1
