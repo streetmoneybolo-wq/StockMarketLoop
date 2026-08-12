@@ -7,9 +7,10 @@
     "dev": "vite",
     "server": "node server/index.mjs",
     "test:server": "node --test server/*.test.mjs",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc -b"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0",
