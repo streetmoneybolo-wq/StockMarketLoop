@@ -7,7 +7,7 @@
     "dev": "vite",
     "server": "node server/index.mjs",
     "test:server": "node --test server/*.test.mjs",
-    "build": "vite build",
+    "build": "node node_modules/vite/bin/vite.js build",
     "lint": "oxlint",
     "preview": "vite preview",
     "typecheck": "tsc -b"
