@@ -21,6 +21,9 @@ input, button, textarea { font: inherit; }
   50% { transform: rotateX(8deg) rotateY(-13deg) rotateZ(-0.6deg) translateY(-8px); }
 }
 .lk-device3d { animation: lkFloat 6s ease-in-out infinite; }
+/* Slow light sheen drifting across the glass/metal, as if the light source moves. */
+@keyframes lkSheen { 0% { transform: translateX(-160%) skewX(-14deg); } 60%, 100% { transform: translateX(320%) skewX(-14deg); } }
+.lk-sheen { animation: lkSheen 8.5s ease-in-out infinite; }
 
 /* hover states the .dc runtime applied via style-hover attributes */
 .lk-x:hover { color: var(--acc, #00ff88) !important; }

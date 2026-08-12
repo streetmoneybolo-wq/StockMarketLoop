@@ -542,6 +542,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
                 <div style={{ borderRadius: 31, background: '#010304', padding: '10px 10px 12px', position: 'relative', overflow: 'hidden' }}>
                   <div style={{ position: 'absolute', inset: 0, borderRadius: 31, background: 'linear-gradient(122deg, rgba(255,255,255,.19) 0%, rgba(255,255,255,.07) 11%, rgba(255,255,255,.015) 20%, transparent 30%, transparent 68%, rgba(255,255,255,.03) 84%, rgba(255,255,255,.12) 100%)', pointerEvents: 'none', zIndex: 6, mixBlendMode: 'screen' }} />
+                  <div className="lk-sheen" style={{ position: 'absolute', top: -24, bottom: -24, left: 0, width: '34%', pointerEvents: 'none', zIndex: 7, background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,.05) 38%, rgba(255,255,255,.17) 50%, rgba(255,255,255,.05) 62%, transparent 100%)', mixBlendMode: 'screen' }} />
 
                   {/* notch row */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '2px 0 8px', position: 'relative' }}>
@@ -552,6 +553,9 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
                   {/* top screen */}
                   <div style={{ borderRadius: 18, overflow: 'hidden', background: bgOf(s.topBgKey), position: 'relative', boxShadow: `inset 0 1.5px 0 rgba(255,255,255,.14), inset 0 -1px 1px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.06), inset 0 0 26px -8px ${acc.c}30` }}>
+                    {/* screen-on bloom (emissive) + faint environment reflection on the glass */}
+                    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 4, background: `radial-gradient(135% 78% at 50% 22%, ${acc.c}14 0%, transparent 54%)`, mixBlendMode: 'screen' }} />
+                    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 8, background: 'linear-gradient(178deg, rgba(196,216,238,.08) 0%, rgba(196,216,238,.02) 16%, transparent 40%, transparent 74%, rgba(30,48,74,.06) 100%)', mixBlendMode: 'screen' }} />
                     {wm(44, 4)}
                     {/* status bar */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px 4px', fontFamily: mono, fontSize: 9, letterSpacing: 0.6, color: '#7e8a96' }}>
