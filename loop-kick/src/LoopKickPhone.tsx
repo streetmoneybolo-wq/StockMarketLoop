@@ -529,18 +529,18 @@ export default class LoopKickPhone extends React.Component<Props, State> {
         </div>
 
         {/* ---- device ---- */}
-        <div style={{ position: 'fixed', right: 30, bottom: 30, zIndex: 80, display: s.open ? 'block' : 'none', maxHeight: 'calc(100vh - 44px)', perspective: 1400, ['--acc' as string]: acc.c }}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transform: 'rotateX(5deg) rotateY(-4deg)', transformStyle: 'preserve-3d', fontFamily: deviceFont, filter: 'drop-shadow(0 44px 40px rgba(0,0,0,.66)) drop-shadow(0 10px 14px rgba(0,0,0,.5))' }}>
+        <div style={{ position: 'fixed', right: 30, bottom: 30, zIndex: 80, display: s.open ? 'block' : 'none', maxHeight: 'calc(100vh - 44px)', perspective: 1050, perspectiveOrigin: '72% 40%', ['--acc' as string]: acc.c }}>
+          <div className="lk-device3d" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transform: 'rotateX(7deg) rotateY(-12deg) rotateZ(-0.6deg)', transformStyle: 'preserve-3d', fontFamily: deviceFont, filter: `drop-shadow(0 58px 64px rgba(0,0,0,.72)) drop-shadow(0 16px 22px rgba(0,0,0,.55)) drop-shadow(0 0 46px ${acc.c}26)`, willChange: 'transform' }}>
 
             {/* ---- top fold ---- */}
             <div style={{ height: s.slid ? screen + 148 : 0, overflow: 'visible', transition: 'height .42s cubic-bezier(.2,.8,.25,1)', display: 'flex', alignItems: 'flex-end' }}>
-              <div ref={this._topSurface} style={{ width: 352, position: 'relative', borderRadius: 30, padding: 3, background: 'linear-gradient(150deg,#5c6771 0%,#20262d 22%,#0c0f13 50%,#2a323c 80%, #48515c 100%)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,.35)', zIndex: 2, transformOrigin: 'center bottom', transform: s.slid ? 'rotateX(0deg)' : 'rotateX(-89deg)', opacity: s.slid ? 1 : 0, pointerEvents: s.slid ? 'auto' : 'none', transition: 'transform .42s cubic-bezier(.2,.8,.25,1), opacity .32s ease' }}>
+              <div ref={this._topSurface} style={{ width: 352, position: 'relative', borderRadius: 34, padding: 3, background: 'linear-gradient(145deg,#aab6c2 0%,#4a545f 16%,#14181d 46%,#0a0d10 58%,#39434e 82%,#7d8a97 100%)', boxShadow: `inset 0 1px 1.5px rgba(255,255,255,.7), inset 0 -1px 2px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.5), 0 0 34px -6px ${acc.c}3a, 0 46px 90px -34px ${acc.c}30`, zIndex: 2, transformOrigin: 'center bottom', transform: s.slid ? 'rotateX(0deg)' : 'rotateX(-89deg)', opacity: s.slid ? 1 : 0, pointerEvents: s.slid ? 'auto' : 'none', transition: 'transform .42s cubic-bezier(.2,.8,.25,1), opacity .32s ease' }}>
                 <div style={{ position: 'absolute', right: -3, top: 70, width: 4, height: 52, borderRadius: '0 3px 3px 0', background: acc.c, boxShadow: `1px 0 3px ${acc.c}66` }} />
                 <div style={{ position: 'absolute', right: -3, top: 134, width: 4, height: 70, borderRadius: '0 3px 3px 0', background: 'linear-gradient(#39424c,#12161b)' }} />
                 <div style={{ position: 'absolute', left: -3, top: 92, width: 4, height: 40, borderRadius: '3px 0 0 3px', background: 'linear-gradient(#39424c,#12161b)' }} />
 
-                <div style={{ borderRadius: 27, background: '#010304', padding: '10px 10px 12px', position: 'relative', overflow: 'hidden' }}>
-                  <div style={{ position: 'absolute', inset: 0, borderRadius: 27, background: 'linear-gradient(118deg, rgba(255,255,255,.09) 0%, rgba(255,255,255,.025) 22%, transparent 40%, transparent 78%, rgba(255,255,255,.05) 100%)', pointerEvents: 'none', zIndex: 6 }} />
+                <div style={{ borderRadius: 31, background: '#010304', padding: '10px 10px 12px', position: 'relative', overflow: 'hidden' }}>
+                  <div style={{ position: 'absolute', inset: 0, borderRadius: 31, background: 'linear-gradient(118deg, rgba(255,255,255,.14) 0%, rgba(255,255,255,.04) 20%, transparent 40%, transparent 76%, rgba(255,255,255,.08) 100%)', pointerEvents: 'none', zIndex: 6 }} />
 
                   {/* notch row */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '2px 0 8px', position: 'relative' }}>
