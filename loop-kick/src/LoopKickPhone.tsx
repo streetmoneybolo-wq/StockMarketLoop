@@ -550,7 +550,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                   </div>
 
                   {/* top screen */}
-                  <div style={{ borderRadius: 18, overflow: 'hidden', background: bgOf(s.topBgKey), position: 'relative', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,.045)' }}>
+                  <div style={{ borderRadius: 18, overflow: 'hidden', background: bgOf(s.topBgKey), position: 'relative', boxShadow: `inset 0 0 0 1px rgba(255,255,255,.06), inset 0 0 26px -8px ${acc.c}30` }}>
                     {wm(44, 4)}
                     {/* status bar */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px 4px', fontFamily: mono, fontSize: 9, letterSpacing: 0.6, color: '#7e8a96' }}>
@@ -567,7 +567,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                     </div>
 
                     {/* tabs */}
-                    <div style={{ display: 'flex', gap: 4, margin: '8px 12px 10px', padding: 3, borderRadius: 12, background: '#0a1117' }}>
+                    <div style={{ display: 'flex', gap: 4, margin: '8px 12px 10px', padding: 3, borderRadius: 12, background: 'rgba(10,17,23,.55)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.04)' }}>
                       {([
                         { key: 'messages', label: 'Messages', badge: messageUnread },
                         { key: 'chirp', label: 'Chirp', badge: 0 },
@@ -609,14 +609,14 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               {s.loading && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center' }}>Loading conversation…</div>}
                               {s.thread.map((m, i) => m.from === 'me' ? (
                                 <div key={m.id || i} style={{ display: 'flex', justifyContent: 'flex-end', animation: 'msgIn .2s ease' }}>
-                                  <div style={{ maxWidth: '80%', padding: '8px 12px', borderRadius: '15px 15px 4px 15px', fontSize: 12, lineHeight: 1.5, background: accentGrad, color: acc.fg, boxShadow: `0 3px 10px ${acc.c}2e` }}>
+                                  <div style={{ maxWidth: '80%', padding: '9px 13px', borderRadius: '17px 17px 5px 17px', fontSize: 12, lineHeight: 1.5, background: accentGrad, color: acc.fg, boxShadow: `0 6px 18px ${acc.c}3d, inset 0 1px 0 rgba(255,255,255,.35)` }}>
                                     {m.media?.map(media => media.mime.startsWith('image/') ? <img key={media.id} src={media.url} alt="Message attachment" style={{ display: 'block', width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 8, marginBottom: m.text ? 5 : 0 }} /> : <audio key={media.id} controls src={media.url} style={{ width: 190, maxWidth: '100%' }} />)}
                                     {m.text}
                                   </div>
                                 </div>
                               ) : (
                                 <div key={m.id || i} style={{ display: 'flex', justifyContent: 'flex-start', animation: 'msgIn .2s ease' }}>
-                                  <div style={{ maxWidth: '80%', padding: '8px 12px', borderRadius: '15px 15px 15px 4px', fontSize: 12, lineHeight: 1.5, background: '#111a23', color: '#dbe4ec', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05)' }}>
+                                  <div style={{ maxWidth: '80%', padding: '9px 13px', borderRadius: '17px 17px 17px 5px', fontSize: 12, lineHeight: 1.5, background: 'rgba(20,28,38,.62)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: '#dbe4ec', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.04), 0 4px 12px rgba(0,0,0,.4)' }}>
                                     {m.media?.map(media => media.mime.startsWith('image/') ? <img key={media.id} src={media.url} alt="Message attachment" style={{ display: 'block', width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 8, marginBottom: m.text ? 5 : 0 }} /> : <audio key={media.id} controls src={media.url} style={{ width: 190, maxWidth: '100%' }} />)}
                                     {m.text}
                                   </div>
