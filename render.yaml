@@ -5,7 +5,7 @@ services:
     plan: starter
     region: ohio
     rootDir: loop-kick
-    buildCommand: pnpm install --frozen-lockfile && pnpm rebuild better-sqlite3 && pnpm build
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm rebuild better-sqlite3 && pnpm build
     startCommand: node server/index.mjs
     healthCheckPath: /api/health
     autoDeployTrigger: commit
