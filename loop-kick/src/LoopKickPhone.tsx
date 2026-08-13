@@ -572,7 +572,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                     </div>
 
                     {/* tabs */}
-                    <div style={{ display: 'flex', gap: 4, margin: '8px 12px 10px', padding: 3, borderRadius: 12, background: 'rgba(10,17,23,.55)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.04)' }}>
+                    <div style={{ display: 'flex', gap: 4, margin: '8px 12px 10px', padding: 3, borderRadius: 12, background: 'rgba(14,20,28,.92)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.04)' }}>
                       {([
                         { key: 'messages', label: 'Messages', badge: messageUnread },
                         { key: 'chirp', label: 'Chirp', badge: 0 },
@@ -621,7 +621,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                 </div>
                               ) : (
                                 <div key={m.id || i} style={{ display: 'flex', justifyContent: 'flex-start', animation: 'msgIn .2s ease' }}>
-                                  <div style={{ maxWidth: '80%', padding: '9px 13px', borderRadius: '17px 17px 17px 5px', fontSize: 12, lineHeight: 1.5, background: 'rgba(20,28,38,.62)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: '#dbe4ec', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.04), 0 4px 12px rgba(0,0,0,.4)' }}>
+                                  <div style={{ maxWidth: '80%', padding: '9px 13px', borderRadius: '17px 17px 17px 5px', fontSize: 12, lineHeight: 1.5, background: 'rgba(22,30,41,.94)', color: '#dbe4ec', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.04), 0 4px 12px rgba(0,0,0,.4)' }}>
                                     {m.media?.map(media => media.mime.startsWith('image/') ? <img key={media.id} src={media.url} alt="Message attachment" style={{ display: 'block', width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 8, marginBottom: m.text ? 5 : 0 }} /> : <audio key={media.id} controls src={media.url} style={{ width: 190, maxWidth: '100%' }} />)}
                                     {m.text}
                                   </div>
