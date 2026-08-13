@@ -191,28 +191,49 @@ export function createLoopKickServer(options = {}) {
   app.post('/api/chirp/sessions/:id/end', (req, res) => proxy(req, res, 'POST', `/sml-loop/v1/chirp/sessions/${Number(req.params.id)}/end`, req.body));
 
   // ---- market data (read-only) ----
-  // Proxies to the moomoo OpenD bridge running on the user's PC, reached via a
-  // Cloudflare tunnel whose URL is set in the QUOTE_UPSTREAM env var. Cached ~2s
-  // and CORS-open (quotes are public, read-only). If the bridge is unreachable
-  // (PC off / tunnel down) we return an empty quote set so the site shows "—"
-  // and never fabricates a price.
-  const QUOTE_UPSTREAM = (process.env.QUOTE_UPSTREAM || '').replace(/\/+$/, '');
-  let quoteCache = { at: 0, body: null };
-  app.get('/api/quotes', async (_req, res) => {
+  // Live quotes from massive.com (Polygon-compatible snapshot). API key in the
+  // MASSIVE_API_KEY env var (server-side only, never sent to the browser). ~10s
+  // per-symbol-set cache, CORS-open. If the key is missing or the upstream errors
+  // we return an empty quote set so the site shows "—" and never fabricates.
+  const MASSIVE_KEY = process.env.MASSIVE_API_KEY || '';
+  const MASSIVE_BASE = (process.env.MASSIVE_BASE || 'https://api.massive.com').replace(/\/+$/, '');
+  const DEFAULT_SYMS = 'SPY,QQQ,NVDA,AAPL,TSLA,MSFT,AMD,META,AMZN,GOOGL,NFLX,COIN';
+  const quoteCache = new Map(); // symbolSet -> { at, body }
+  app.get('/api/quotes', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'no-store');
-    if (!QUOTE_UPSTREAM) return res.json({ ok: false, reason: 'no-upstream', quotes: {} });
+    if (!MASSIVE_KEY) return res.json({ ok: false, reason: 'no-key', quotes: {} });
+    const syms = String(req.query.symbols || DEFAULT_SYMS)
+      .toUpperCase().replace(/[^A-Z0-9,.\-]/g, '').split(',').filter(Boolean).slice(0, 60);
+    const key = syms.join(',');
     const now = Date.now();
-    if (quoteCache.body && now - quoteCache.at < 2000) return res.json(quoteCache.body);
+    const hit = quoteCache.get(key);
+    if (hit && now - hit.at < 10000) return res.json(hit.body);
     try {
-      const r = await fetch(`${QUOTE_UPSTREAM}/quotes`, { signal: AbortSignal.timeout(4000) });
-      if (!r.ok) throw new Error(`upstream ${r.status}`);
+      const url = `${MASSIVE_BASE}/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(key)}`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(6000) });
+      if (!r.ok) throw new Error(`massive ${r.status}`);
       const data = await r.json();
-      quoteCache = { at: now, body: { ok: true, quotes: data.quotes || {}, age: data.age ?? null } };
-      return res.json(quoteCache.body);
+      const quotes = {};
+      for (const t of (data.tickers || [])) {
+        const last = t.lastTrade?.p ?? t.day?.c ?? t.prevDay?.c ?? null;
+        const chg = typeof t.todaysChange === 'number' ? t.todaysChange : null;
+        const pct = typeof t.todaysChangePerc === 'number' ? t.todaysChangePerc : null;
+        quotes[t.ticker] = {
+          sym: t.ticker,
+          last: last == null ? null : Math.round(last * 100) / 100,
+          chg: chg == null ? null : Math.round(chg * 100) / 100,
+          pct: pct == null ? null : Math.round(pct * 100) / 100,
+          vol: t.day?.v ?? null,
+          t: t.updated ? new Date(Math.floor(t.updated / 1e6)).toISOString().slice(11, 19) : null,
+        };
+      }
+      const body = { ok: true, quotes };
+      quoteCache.set(key, { at: now, body });
+      return res.json(body);
     } catch {
-      if (quoteCache.body && now - quoteCache.at < 30000) return res.json({ ...quoteCache.body, stale: true });
-      return res.json({ ok: false, reason: 'upstream-unreachable', quotes: {} });
+      if (hit && now - hit.at < 60000) return res.json({ ...hit.body, stale: true });
+      return res.json({ ok: false, reason: 'upstream-error', quotes: {} });
     }
   });
 
