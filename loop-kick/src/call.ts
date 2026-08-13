@@ -89,11 +89,28 @@ export class CallClient {
   }
 
   private async media(video: boolean): Promise<MediaStream> {
-    if (!navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) throw new Error('This device cannot make calls.');
+    if (!navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) throw new Error('This device/browser cannot make calls.');
     return navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       video: video ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 }, facingMode: 'user' } : false,
     });
+  }
+
+  private mediaError(e: Error): string {
+    switch (e && e.name) {
+      case 'NotAllowedError':
+      case 'PermissionDeniedError':
+      case 'SecurityError':
+        return 'Allow camera & mic for this site (tap the 🔒/camera icon in your address bar → Allow), then tap Call again.';
+      case 'NotFoundError':
+      case 'DevicesNotFoundError':
+        return 'No camera or microphone found on this device.';
+      case 'NotReadableError':
+      case 'TrackStartError':
+        return 'Your camera/mic is busy in another app — close it and try again.';
+      default:
+        return (e && e.message) || 'Could not start the call.';
+    }
   }
 
   private async makePeer(role: 'caller' | 'callee', sessionId: number): Promise<RTCPeerConnection> {
@@ -180,8 +197,7 @@ export class CallClient {
       await this.applySignal(await this.transport.chirpSignal(sessionId, { offer: pc.localDescription?.toJSON() }) as SignalView);
       void this.poll();
     } catch (error) {
-      const name = (error as Error).name;
-      this.set('ended', name === 'NotAllowedError' ? 'Camera / microphone permission was denied.' : (error as Error).message);
+      this.set('ended', this.mediaError(error as Error));
       await this.hangup(true);
     }
   }
@@ -199,7 +215,7 @@ export class CallClient {
       await this.applySignal(view);
       void this.poll();
     } catch (error) {
-      this.set('ended', (error as Error).message);
+      this.set('ended', this.mediaError(error as Error));
       await this.hangup(true);
     }
   }
