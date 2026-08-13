@@ -84,6 +84,7 @@ export interface Transport {
   chirpSignal(sessionId: number, payload?: Record<string, unknown>): Promise<Record<string, unknown>>;
   chirpEnd(sessionId: number): Promise<Record<string, unknown>>;
   chirpIncoming(): Promise<{ incoming: unknown[]; missed: unknown[] }>;
+  iceConfig(): Promise<RTCConfiguration>;
   connect(onMessage: (m: WireMessage) => void, onRefresh?: () => void): void;
   disconnect(): void;
 }
@@ -127,6 +128,7 @@ function mockTransport(): Transport {
     updateNotification: async () => ({ items: [] }), savePreferences: async input => input, saveChirpSettings: async input => input,
     upload: async file => ({ id: 1, url: URL.createObjectURL(file), mime: file.type }),
     chirpStart: async () => ({ id: 1, decision: 'live' }), chirpSignal: async () => ({}), chirpEnd: async () => ({}), chirpIncoming: async () => ({ incoming: [], missed: [] }),
+    iceConfig: async () => ({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }),
     connect: cb => { callback = cb; void callback; }, disconnect: () => { callback = null; },
   };
 }
@@ -217,6 +219,7 @@ function liveTransport(cfg: LoopKickConfig): Transport {
     chirpSignal: (id, payload = {}) => request(`/api/chirp/sessions/${id}/signal`, { method: Object.keys(payload).length ? 'POST' : 'GET', ...(Object.keys(payload).length ? { body: JSON.stringify(payload) } : {}) }),
     chirpEnd: id => request(`/api/chirp/sessions/${id}/end`, { method: 'POST', body: '{}' }),
     chirpIncoming: () => request('/api/chirp/incoming'),
+    iceConfig: () => request('/api/ice'),
     connect: (messageCb, refreshCb) => { onMessage = messageCb; onRefresh = refreshCb || null; stopped = false; void poll(); },
     disconnect: () => { stopped = true; if (timer) clearTimeout(timer); timer = null; onMessage = null; onRefresh = null; },
   };

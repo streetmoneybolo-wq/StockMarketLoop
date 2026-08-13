@@ -276,6 +276,20 @@ export function createLoopKickServer(options = {}) {
     }
   });
 
+  // WebRTC ICE config for voice/video calls. STUN is always included; a TURN
+  // server (needed for calls across different networks / mobile data) is added
+  // when TURN_URLS + TURN_USERNAME + TURN_CREDENTIAL env vars are set.
+  app.get('/api/ice', (_req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store');
+    const iceServers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+    const turnUrls = String(process.env.TURN_URLS || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (turnUrls.length && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+      iceServers.push({ urls: turnUrls, username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL });
+    }
+    res.json({ iceServers });
+  });
+
   if (fs.existsSync(distDir)) {
     app.use(express.static(distDir, { index: false, maxAge: '1h' }));
     app.use((req, res, next) => {

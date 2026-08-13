@@ -9,6 +9,7 @@
 import React from 'react';
 import { BootstrapData, createTransport, Person, SiteNotification, ThreadSummary, Transport, WireMessage } from './transport';
 import { LiveChirpClient } from './liveChirp';
+import { CallClient, offerIsCall } from './call';
 
 /* ---------------- static data from the design ---------------- */
 
@@ -93,6 +94,12 @@ interface State {
   preferences: Record<string, string | number | boolean>;
   chirpPrefs: Record<string, string | number | boolean>;
   chirpStatus: string;
+  callPhase: 'idle' | 'calling' | 'connecting' | 'connected' | 'ended';
+  callVideo: boolean;
+  callPeerId: number;
+  callPeerName: string;
+  callError: string;
+  incoming: { id: number; peerId: number; peerName: string; video: boolean } | null;
 }
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
@@ -144,10 +151,31 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     preferences: {},
     chirpPrefs: {},
     chirpStatus: '',
+    callPhase: 'idle',
+    callVideo: false,
+    callPeerId: 0,
+    callPeerName: '',
+    callError: '',
+    incoming: null,
   };
 
   private transport: Transport = createTransport();
   private chirp = new LiveChirpClient(this.transport, chirpStatus => this.setState({ chirpStatus }));
+  private call = new CallClient(this.transport, {
+    onPhase: (callPhase, meta) => {
+      if (callPhase === 'connected' && this.state.callPhase !== 'connected') this.setState({ callSec: 0 });
+      this.setState({ callPhase, callVideo: meta.video, callError: meta.error || '' });
+      if (callPhase === 'ended') { const err = meta.error; this._callEndTimer = setTimeout(() => this.setState(p => (p.callPhase === 'ended' ? { callPhase: 'idle', mode: p.mode === 'video' || p.mode === 'voice' ? 'compose' : p.mode } : null)), err ? 2600 : 400); }
+    },
+    onLocalStream: (s) => { this._localStream = s; this.attachStream(this._localEl, s, true); },
+    onRemoteStream: (s) => { this._remoteStream = s; this.attachStream(this._remoteEl, s, false); },
+  });
+  private _localStream: MediaStream | null = null;
+  private _remoteStream: MediaStream | null = null;
+  private _localEl: HTMLVideoElement | null = null;
+  private _remoteEl: HTMLVideoElement | null = null;
+  private _callEndTimer: ReturnType<typeof setTimeout> | null = null;
+  private _handledIncoming = new Set<number>();
   private _wantScroll = false;
   private _interval: ReturnType<typeof setInterval> | null = null;
   private _roomTick = 0;
@@ -252,8 +280,21 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     void this.hydrate().finally(() => this.transport.connect(this.onIncoming, () => void this.refreshSummary()));
     this._chirpTimer = setInterval(() => {
       this.transport.chirpIncoming().then(data => {
-        const incoming = (data.incoming || [])[0];
-        if (incoming) void this.chirp.acceptIncoming(incoming);
+        const incoming = (data.incoming || [])[0] as { id?: number; peer_id?: number; peer_name?: string; offer?: unknown } | undefined;
+        if (!incoming?.id) return;
+        const id = Number(incoming.id);
+        if (this._handledIncoming.has(id) || this.call.currentSession === id) return;
+        if (!incoming.offer) return; // wait until the offer arrives so we can classify it
+        const kind = offerIsCall(incoming.offer as never);
+        if (kind.call) {
+          // A real voice/video call -> show the accept/decline banner.
+          if (this.call.busy || this.state.incoming) return;
+          this._handledIncoming.add(id);
+          const peerId = Number(incoming.peer_id || 0);
+          this.setState({ incoming: { id, peerId, peerName: incoming.peer_name || this.peerName(peerId), video: kind.video } });
+        } else {
+          void this.chirp.acceptIncoming(incoming); // sendonly audio -> push-to-talk chirp (unchanged)
+        }
       }).catch(() => {});
     }, 2800);
 
@@ -264,7 +305,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       if (s.mode === 'watch' && s.playing) {
         this.setState(p => ({ watchSec: p.watchSec + 1, viewers: p.viewers + (Math.random() < 0.3 ? 1 : 0) }));
       }
-      if (s.mode === 'video' || s.mode === 'voice') {
+      if ((s.mode === 'video' || s.mode === 'voice') && s.callPhase === 'connected') {
         this.setState(p => ({ callSec: p.callSec + 1 }));
       }
       if (s.mode === 'room') {
@@ -289,9 +330,66 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (this._chirpTimer) clearInterval(this._chirpTimer);
     this._surfaceTimers.forEach(timer => clearTimeout(timer));
     this._surfaceTimers = [];
+    if (this._callEndTimer) clearTimeout(this._callEndTimer);
     void this.chirp.close(true);
+    void this.call.hangup(true);
     this.transport.disconnect();
   }
+
+  /* ---------------- voice / video calls ---------------- */
+
+  private attachStream(el: HTMLVideoElement | null, stream: MediaStream | null, muted: boolean) {
+    if (!el) return;
+    el.srcObject = stream;
+    el.muted = muted;
+    if (stream) void el.play().catch(() => {});
+  }
+
+  private peerName(userId: number): string {
+    const p = this.state.people.find(person => person.userId === userId);
+    if (p?.name) return p.name;
+    const active = this.state.threads.find(t => t.id === this.state.activeThreadId);
+    return active?.people?.[0]?.name || active?.title || PEER_NAME;
+  }
+
+  // The friend to call = the active conversation's peer (falls back to first friend).
+  private callTarget(): { id: number; name: string } | null {
+    const active = this.state.threads.find(t => t.id === this.state.activeThreadId);
+    const peer = active?.people?.[0] || this.state.people.find(pp => pp.friend) || this.state.people[0];
+    if (!peer?.userId) return null;
+    return { id: peer.userId, name: peer.name || PEER_NAME };
+  }
+
+  private startCall = (video: boolean) => {
+    if (this.call.busy) return;
+    const target = this.callTarget();
+    if (!target) { this.setState({ mode: video ? 'video' : 'voice', callPhase: 'ended', callError: 'Open a chat with a friend first, then call.' }); return; }
+    this.setState({ mode: video ? 'video' : 'voice', callPeerId: target.id, callPeerName: target.name, callVideo: video, muted: false, camOff: false, callSec: 0, callError: '' });
+    void this.call.call(target.id, video);
+  };
+
+  private acceptIncomingCall = () => {
+    const inc = this.state.incoming; if (!inc) return;
+    this.setState({ incoming: null, open: true, slid: true, tab: 'messages', mode: inc.video ? 'video' : 'voice', callPeerId: inc.peerId, callPeerName: inc.peerName, callVideo: inc.video, muted: false, camOff: false, callSec: 0, callError: '' });
+    // Fetch the caller's full offer, then answer it.
+    this.transport.chirpSignal(inc.id)
+      .then(view => void this.call.accept({ ...(view as object), id: inc.id, peer_id: inc.peerId } as never))
+      .catch(() => this.setState({ callPhase: 'ended', callError: 'Could not connect the call.' }));
+  };
+
+  private declineIncoming = () => {
+    const inc = this.state.incoming; if (!inc) return;
+    void this.call.decline(inc.id);
+    this.setState({ incoming: null });
+  };
+
+  private endCall = () => {
+    void this.call.hangup(true);
+    this.setState(p => ({ callPhase: 'idle', mode: p.mode === 'video' || p.mode === 'voice' ? 'compose' : p.mode, callSec: 0 }));
+  };
+
+  private toggleMute = () => { const m = !this.state.muted; this.call.setMuted(m); this.setState({ muted: m }); };
+  private toggleCam = () => { const off = !this.state.camOff; this.call.setCameraOff(off); this.setState({ camOff: off }); };
 
   /* ---------------- message system wiring ---------------- */
 
@@ -511,6 +609,19 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
     return (
       <>
+        {/* ---- incoming call banner ---- */}
+        {s.incoming && (
+          <div style={{ position: 'fixed', top: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 95, width: 320, maxWidth: 'calc(100vw - 24px)', display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', borderRadius: 18, background: 'linear-gradient(160deg,#141c22 0%,#0a0d10 100%)', border: '1px solid #2a333c', boxShadow: '0 22px 50px -12px rgba(0,0,0,.8)', fontFamily: deviceFont, animation: 'msgIn .3s ease' }}>
+            <div style={{ width: 42, height: 42, borderRadius: '50%', flex: 'none', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: acc.c, boxShadow: `0 0 0 2px ${acc.c}55` }}>{(s.incoming.peerName || 'L').slice(0, 1).toUpperCase()}</div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: '#e8edf2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.incoming.peerName || 'Loop member'}</div>
+              <div style={{ fontSize: 10.5, color: acc.c }}>Incoming {s.incoming.video ? 'video' : 'voice'} call…</div>
+            </div>
+            <button onClick={this.declineIncoming} aria-label="Decline" style={{ width: 34, height: 34, borderRadius: '50%', flex: 'none', border: 'none', cursor: 'pointer', background: 'linear-gradient(140deg,#ff5c7a,#d42a4c)', color: '#fff', fontSize: 15, fontWeight: 700 }}>✕</button>
+            <button onClick={this.acceptIncomingCall} aria-label="Accept" style={{ width: 34, height: 34, borderRadius: '50%', flex: 'none', border: 'none', cursor: 'pointer', background: 'linear-gradient(140deg,#00e07a,#009c55)', color: '#06120c', fontSize: 15, fontWeight: 700 }}>{s.incoming.video ? '📹' : '📞'}</button>
+          </div>
+        )}
+
         {/* ---- dock ---- */}
         <div ref={this._dockSurface} onClick={() => { this.scrollBottom(); this.setState(p => ({ open: !p.open })); }}
           style={{ position: 'fixed', right: 26, bottom: 26, zIndex: 70, display: s.open ? 'none' : 'flex', alignItems: 'center', gap: 11, padding: '12px 18px 12px 14px', borderRadius: 16, cursor: 'pointer', background: 'linear-gradient(155deg,#161c22 0%,#0a0d10 100%)', border: '1px solid #2a333c', boxShadow: '0 14px 34px rgba(0,0,0,.6)', animation: 'kickPulse 2.6s ease-in-out infinite' }}>
@@ -729,8 +840,12 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           <button key={mo.key}
                             onClick={() => {
                               this.scrollBottom();
-                              const reset = (mo.key === 'video' || mo.key === 'voice') && s.mode !== 'video' && s.mode !== 'voice' ? { callSec: 0 } : {};
-                              this.setState({ mode: mo.key, ...reset } as Pick<State, 'mode'>);
+                              if (mo.key === 'video' || mo.key === 'voice') {
+                                if (!this.call.busy) this.startCall(mo.key === 'video');
+                                else this.setState({ mode: mo.key });
+                                return;
+                              }
+                              this.setState({ mode: mo.key } as Pick<State, 'mode'>);
                             }}
                             style={{ flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 9.5, fontWeight: 600, letterSpacing: 0.3, background: s.mode === mo.key ? acc.c : 'transparent', color: s.mode === mo.key ? acc.fg : '#7e8a96', whiteSpace: 'nowrap', transition: 'background .18s, color .18s' }}>{mo.label}</button>
                         ))}
@@ -805,42 +920,59 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                       </div>
                     )}
 
-                    {/* video call */}
+                    {/* video call — real getUserMedia + WebRTC */}
                     {s.mode === 'video' && (
-                      <div style={{ borderRadius: 13, overflow: 'hidden', position: 'relative', background: '#0a1117', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.5)' }}>
-                        <div style={{ height: 132, position: 'relative', background: 'radial-gradient(320px 160px at 50% 32%, #14222e 0%, #0a1117 75%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
-                          <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, color: '#00ff88', boxShadow: '0 0 0 2px rgba(0,255,136,.25), inset 0 1px 0 rgba(255,255,255,.08)' }}>S</div>
-                          <div style={{ fontSize: 11.5, fontWeight: 600, color: '#e8edf2' }}>{PEER_NAME}</div>
-                          <div style={{ fontFamily: mono, fontSize: 9.5, color: '#00ff88' }}>{callTime}</div>
-                          <div style={{ position: 'absolute', right: 8, bottom: 8, width: 52, height: 38, borderRadius: 8, background: 'repeating-linear-gradient(135deg,#101820 0 6px,#0b1218 6px 12px)', border: '1px solid #1e2831', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: mono, fontSize: 7, color: '#4a545e' }}>YOU</div>
+                      <div style={{ borderRadius: 13, overflow: 'hidden', position: 'relative', background: '#05090d', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.5)' }}>
+                        <div style={{ position: 'relative', height: 168, background: 'radial-gradient(320px 160px at 50% 32%, #14222e 0%, #05090d 78%)' }}>
+                          <video ref={el => { this._remoteEl = el; this.attachStream(el, this._remoteStream, false); }} autoPlay playsInline
+                            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: s.callPhase === 'connected' ? 1 : 0, transition: 'opacity .3s' }} />
+                          {s.callPhase !== 'connected' && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 7, padding: 12, textAlign: 'center' }}>
+                              <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, color: acc.c, boxShadow: `0 0 0 2px ${acc.c}40` }}>{(s.callPeerName || PEER_NAME).slice(0, 1).toUpperCase()}</div>
+                              <div style={{ fontSize: 11.5, fontWeight: 600, color: '#e8edf2' }}>{s.callPeerName || PEER_NAME}</div>
+                              <div style={{ fontFamily: mono, fontSize: 9.5, color: s.callError ? '#ff5c7a' : acc.c }}>{s.callError || (s.callPhase === 'calling' ? 'Calling…' : s.callPhase === 'connecting' ? 'Connecting…' : s.callPhase === 'ended' ? 'Call ended' : 'Starting…')}</div>
+                            </div>
+                          )}
+                          {s.callPhase === 'connected' && (
+                            <div style={{ position: 'absolute', left: 10, top: 8, display: 'flex', alignItems: 'center', gap: 6, padding: '3px 9px', borderRadius: 999, background: 'rgba(5,9,13,.6)' }}>
+                              <span style={{ fontSize: 10.5, fontWeight: 600, color: '#e8edf2' }}>{s.callPeerName || PEER_NAME}</span>
+                              <span style={{ fontFamily: mono, fontSize: 9, color: acc.c }}>{callTime}</span>
+                            </div>
+                          )}
+                          <video ref={el => { this._localEl = el; this.attachStream(el, this._localStream, true); }} autoPlay playsInline muted
+                            style={{ position: 'absolute', right: 8, bottom: 8, width: 58, height: 82, borderRadius: 9, objectFit: 'cover', background: '#0b1218', border: '1px solid #1e2831', transform: 'scaleX(-1)', display: s.camOff ? 'none' : 'block' }} />
+                          {s.camOff && <div style={{ position: 'absolute', right: 8, bottom: 8, width: 58, height: 82, borderRadius: 9, background: '#0b1218', border: '1px solid #1e2831', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: mono, fontSize: 7, color: '#4a545e' }}>CAM OFF</div>}
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'center', gap: 10, padding: '9px 0 10px' }}>
-                          {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', () => this.setState(p => ({ muted: !p.muted })))}
-                          {callBtn('V', s.camOff ? '#ff5c7a' : '#131d26', s.camOff ? '#fff' : '#98a3ad', () => this.setState(p => ({ camOff: !p.camOff })))}
-                          {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', () => this.setState({ mode: 'compose', callSec: 0 }), true)}
+                          {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', this.toggleMute)}
+                          {callBtn('V', s.camOff ? '#ff5c7a' : '#131d26', s.camOff ? '#fff' : '#98a3ad', this.toggleCam)}
+                          {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.endCall, true)}
                         </div>
                       </div>
                     )}
 
-                    {/* voice call */}
+                    {/* voice call — real getUserMedia + WebRTC (audio) */}
                     {s.mode === 'voice' && (
                       <div style={{ borderRadius: 13, overflow: 'hidden', background: '#0a1117', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.5)', padding: '14px 12px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9 }}>
+                        <video ref={el => { this._remoteEl = el; this.attachStream(el, this._remoteStream, false); }} autoPlay playsInline style={{ display: 'none' }} />
                         <div style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%' }}>
-                          <div style={{ width: 40, height: 40, borderRadius: '50%', flex: 'none', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 700, color: '#00ff88', boxShadow: '0 0 0 2px rgba(0,255,136,.25)' }}>S</div>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: '#e8edf2' }}>{PEER_NAME}</div>
-                            <div style={{ fontFamily: mono, fontSize: 9.5, color: '#00ff88' }}>Voice · {callTime}</div>
+                          <div style={{ width: 40, height: 40, borderRadius: '50%', flex: 'none', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 700, color: acc.c, boxShadow: `0 0 0 2px ${acc.c}40` }}>{(s.callPeerName || PEER_NAME).slice(0, 1).toUpperCase()}</div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#e8edf2' }}>{s.callPeerName || PEER_NAME}</div>
+                            <div style={{ fontFamily: mono, fontSize: 9.5, color: s.callError ? '#ff5c7a' : acc.c }}>{s.callError || (s.callPhase === 'connected' ? `Voice · ${callTime}` : s.callPhase === 'calling' ? 'Calling…' : s.callPhase === 'connecting' ? 'Connecting…' : s.callPhase === 'ended' ? 'Call ended' : 'Voice')}</div>
                           </div>
-                          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'flex-end', gap: 2.5, height: 22 }}>
-                            {[8, 16, 11, 19, 9].map((h, i) => (
-                              <span key={i} style={{ width: 3, height: h, borderRadius: 2, background: acc.c, animation: `wave .9s ease-in-out ${i * 0.15}s infinite` }} />
-                            ))}
-                          </div>
+                          {s.callPhase === 'connected' && (
+                            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'flex-end', gap: 2.5, height: 22 }}>
+                              {[8, 16, 11, 19, 9].map((h, i) => (
+                                <span key={i} style={{ width: 3, height: h, borderRadius: 2, background: acc.c, animation: `wave .9s ease-in-out ${i * 0.15}s infinite` }} />
+                              ))}
+                            </div>
+                          )}
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'center', gap: 10, paddingTop: 2 }}>
-                          {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', () => this.setState(p => ({ muted: !p.muted })))}
+                          {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', this.toggleMute)}
                           {callBtn('S', s.speaker ? acc.c : '#131d26', s.speaker ? acc.fg : '#98a3ad', () => this.setState(p => ({ speaker: !p.speaker })))}
-                          {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', () => this.setState({ mode: 'compose', callSec: 0 }), true)}
+                          {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.endCall, true)}
                         </div>
                       </div>
                     )}
