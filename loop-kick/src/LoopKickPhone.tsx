@@ -613,6 +613,9 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     const showComposer = (s.mode === 'compose' && s.slid && !!activeThread);
     const coverVisible = s.mode === 'compose' && !s.slid;
     const callTime = Math.floor(s.callSec / 60) + ':' + String(s.callSec % 60).padStart(2, '0');
+    const callTgt = this.callTarget();
+    const calleeName = s.callPeerName || (callTgt ? callTgt.name : PEER_NAME);
+    const preCall = s.callPhase === 'idle' || s.callPhase === 'ended'; // show "ready to call" screen
     const mono = 'ui-monospace,Menlo,monospace';
 
     const wm = (size: number, ls: number) => (
@@ -861,8 +864,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               if (s.mode === 'room' && mo.key !== 'room' && this.roomClient.active) void this.roomClient.leave();
                               if (mo.key === 'room') { this.enterRoom(); return; }
                               if (mo.key === 'video' || mo.key === 'voice') {
-                                if (!this.call.busy) this.startCall(mo.key === 'video');
-                                else this.setState({ mode: mo.key });
+                                // Show the pre-call screen — do NOT auto-dial. The user taps Call.
+                                this.setState({ mode: mo.key, callVideo: mo.key === 'video' });
                                 return;
                               }
                               this.setState({ mode: mo.key } as Pick<State, 'mode'>);
@@ -960,10 +963,11 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           <video ref={el => { this._remoteEl = el; this.attachStream(el, this._remoteStream, false); }} autoPlay playsInline
                             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: s.callPhase === 'connected' ? 1 : 0, transition: 'opacity .3s' }} />
                           {s.callPhase !== 'connected' && (
-                            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 7, padding: 12, textAlign: 'center' }}>
-                              <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, color: acc.c, boxShadow: `0 0 0 2px ${acc.c}40` }}>{(s.callPeerName || PEER_NAME).slice(0, 1).toUpperCase()}</div>
-                              <div style={{ fontSize: 11.5, fontWeight: 600, color: '#e8edf2' }}>{s.callPeerName || PEER_NAME}</div>
-                              <div style={{ fontFamily: mono, fontSize: 9.5, color: s.callError ? '#ff5c7a' : acc.c }}>{s.callError || (s.callPhase === 'calling' ? 'Calling…' : s.callPhase === 'connecting' ? 'Connecting…' : s.callPhase === 'ended' ? 'Call ended' : 'Starting…')}</div>
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 9, padding: 12, textAlign: 'center' }}>
+                              <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, color: acc.c, boxShadow: `0 0 0 2px ${acc.c}40` }}>{calleeName.slice(0, 1).toUpperCase()}</div>
+                              <div style={{ fontSize: 11.5, fontWeight: 600, color: '#e8edf2' }}>{calleeName}</div>
+                              <div style={{ fontFamily: mono, fontSize: 9.5, color: s.callError ? '#ff5c7a' : acc.c }}>{s.callError || (s.callPhase === 'calling' ? 'Calling…' : s.callPhase === 'connecting' ? 'Connecting…' : 'Video call')}</div>
+                              {preCall && <button onClick={() => this.startCall(true)} style={{ marginTop: 4, padding: '9px 26px', borderRadius: 999, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, background: acc.c, color: acc.fg }}>📹 Call {calleeName.split(' ')[0]}</button>}
                             </div>
                           )}
                           {s.callPhase === 'connected' && (
@@ -976,11 +980,13 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                             style={{ position: 'absolute', right: 8, bottom: 8, width: 58, height: 82, borderRadius: 9, objectFit: 'cover', background: '#0b1218', border: '1px solid #1e2831', transform: 'scaleX(-1)', display: s.camOff ? 'none' : 'block' }} />
                           {s.camOff && <div style={{ position: 'absolute', right: 8, bottom: 8, width: 58, height: 82, borderRadius: 9, background: '#0b1218', border: '1px solid #1e2831', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: mono, fontSize: 7, color: '#4a545e' }}>CAM OFF</div>}
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'center', gap: 10, padding: '9px 0 10px' }}>
-                          {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', this.toggleMute)}
-                          {callBtn('V', s.camOff ? '#ff5c7a' : '#131d26', s.camOff ? '#fff' : '#98a3ad', this.toggleCam)}
-                          {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.endCall, true)}
-                        </div>
+                        {!preCall && (
+                          <div style={{ display: 'flex', justifyContent: 'center', gap: 10, padding: '9px 0 10px' }}>
+                            {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', this.toggleMute)}
+                            {callBtn('V', s.camOff ? '#ff5c7a' : '#131d26', s.camOff ? '#fff' : '#98a3ad', this.toggleCam)}
+                            {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.endCall, true)}
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -989,10 +995,10 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                       <div style={{ borderRadius: 13, overflow: 'hidden', background: '#0a1117', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.5)', padding: '14px 12px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9 }}>
                         <video ref={el => { this._remoteEl = el; this.attachStream(el, this._remoteStream, false); }} autoPlay playsInline style={{ display: 'none' }} />
                         <div style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%' }}>
-                          <div style={{ width: 40, height: 40, borderRadius: '50%', flex: 'none', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 700, color: acc.c, boxShadow: `0 0 0 2px ${acc.c}40` }}>{(s.callPeerName || PEER_NAME).slice(0, 1).toUpperCase()}</div>
+                          <div style={{ width: 40, height: 40, borderRadius: '50%', flex: 'none', background: 'linear-gradient(140deg,#20303c,#101820)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 700, color: acc.c, boxShadow: `0 0 0 2px ${acc.c}40` }}>{calleeName.slice(0, 1).toUpperCase()}</div>
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: '#e8edf2' }}>{s.callPeerName || PEER_NAME}</div>
-                            <div style={{ fontFamily: mono, fontSize: 9.5, color: s.callError ? '#ff5c7a' : acc.c }}>{s.callError || (s.callPhase === 'connected' ? `Voice · ${callTime}` : s.callPhase === 'calling' ? 'Calling…' : s.callPhase === 'connecting' ? 'Connecting…' : s.callPhase === 'ended' ? 'Call ended' : 'Voice')}</div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#e8edf2' }}>{calleeName}</div>
+                            <div style={{ fontFamily: mono, fontSize: 9.5, color: s.callError ? '#ff5c7a' : acc.c }}>{s.callError || (s.callPhase === 'connected' ? `Voice · ${callTime}` : s.callPhase === 'calling' ? 'Calling…' : s.callPhase === 'connecting' ? 'Connecting…' : 'Voice call')}</div>
                           </div>
                           {s.callPhase === 'connected' && (
                             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'flex-end', gap: 2.5, height: 22 }}>
@@ -1002,11 +1008,15 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                             </div>
                           )}
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'center', gap: 10, paddingTop: 2 }}>
-                          {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', this.toggleMute)}
-                          {callBtn('S', s.speaker ? acc.c : '#131d26', s.speaker ? acc.fg : '#98a3ad', () => this.setState(p => ({ speaker: !p.speaker })))}
-                          {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.endCall, true)}
-                        </div>
+                        {preCall ? (
+                          <button onClick={() => this.startCall(false)} style={{ padding: '9px 26px', borderRadius: 999, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, background: acc.c, color: acc.fg }}>📞 Call {calleeName.split(' ')[0]}</button>
+                        ) : (
+                          <div style={{ display: 'flex', justifyContent: 'center', gap: 10, paddingTop: 2 }}>
+                            {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', this.toggleMute)}
+                            {callBtn('S', s.speaker ? acc.c : '#131d26', s.speaker ? acc.fg : '#98a3ad', () => this.setState(p => ({ speaker: !p.speaker })))}
+                            {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.endCall, true)}
+                          </div>
+                        )}
                       </div>
                     )}
 
