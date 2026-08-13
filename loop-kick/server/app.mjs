@@ -290,6 +290,32 @@ export function createLoopKickServer(options = {}) {
     res.json({ iceServers });
   });
 
+  // LiveKit access token for group video rooms (SFU). Needs LIVEKIT_URL,
+  // LIVEKIT_API_KEY, LIVEKIT_API_SECRET (from a free LiveKit Cloud project).
+  // The room name is scoped per conversation; identity = the user's SML id.
+  app.post('/api/livekit-token', async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store');
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!process.env.LIVEKIT_URL || !process.env.LIVEKIT_API_KEY || !process.env.LIVEKIT_API_SECRET) {
+      return res.json({ ok: false, reason: 'no-livekit' });
+    }
+    const room = String(req.body?.room || 'loop').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64) || 'loop';
+    const identity = String(auth.identity.userId || auth.identity.wpUserId || 'user');
+    const name = String(auth.identity.name || auth.identity.handle || 'Loop');
+    try {
+      const { AccessToken } = await import('livekit-server-sdk');
+      const at = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, { identity, name, ttl: '2h' });
+      at.addGrant({ roomJoin: true, room, canPublish: true, canSubscribe: true });
+      const token = await at.toJwt();
+      return res.json({ ok: true, token, url: process.env.LIVEKIT_URL, room, identity, name });
+    } catch (error) {
+      console.error('LiveKit token error:', error.message);
+      return res.json({ ok: false, reason: 'token-error' });
+    }
+  });
+
   if (fs.existsSync(distDir)) {
     app.use(express.static(distDir, { index: false, maxAge: '1h' }));
     app.use((req, res, next) => {

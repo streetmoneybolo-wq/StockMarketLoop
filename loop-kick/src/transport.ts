@@ -85,6 +85,7 @@ export interface Transport {
   chirpEnd(sessionId: number): Promise<Record<string, unknown>>;
   chirpIncoming(): Promise<{ incoming: unknown[]; missed: unknown[] }>;
   iceConfig(): Promise<RTCConfiguration>;
+  livekitToken(room: string): Promise<{ ok: boolean; token?: string; url?: string; room?: string; name?: string; reason?: string }>;
   connect(onMessage: (m: WireMessage) => void, onRefresh?: () => void): void;
   disconnect(): void;
 }
@@ -129,6 +130,7 @@ function mockTransport(): Transport {
     upload: async file => ({ id: 1, url: URL.createObjectURL(file), mime: file.type }),
     chirpStart: async () => ({ id: 1, decision: 'live' }), chirpSignal: async () => ({}), chirpEnd: async () => ({}), chirpIncoming: async () => ({ incoming: [], missed: [] }),
     iceConfig: async () => ({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }),
+    livekitToken: async () => ({ ok: false, reason: 'no-livekit' }),
     connect: cb => { callback = cb; void callback; }, disconnect: () => { callback = null; },
   };
 }
@@ -220,6 +222,7 @@ function liveTransport(cfg: LoopKickConfig): Transport {
     chirpEnd: id => request(`/api/chirp/sessions/${id}/end`, { method: 'POST', body: '{}' }),
     chirpIncoming: () => request('/api/chirp/incoming'),
     iceConfig: () => request('/api/ice'),
+    livekitToken: (room) => request('/api/livekit-token', { method: 'POST', body: JSON.stringify({ room }) }),
     connect: (messageCb, refreshCb) => { onMessage = messageCb; onRefresh = refreshCb || null; stopped = false; void poll(); },
     disconnect: () => { stopped = true; if (timer) clearTimeout(timer); timer = null; onMessage = null; onRefresh = null; },
   };

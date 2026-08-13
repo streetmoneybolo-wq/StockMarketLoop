@@ -10,6 +10,7 @@ import React from 'react';
 import { BootstrapData, createTransport, Person, SiteNotification, ThreadSummary, Transport, WireMessage } from './transport';
 import { LiveChirpClient } from './liveChirp';
 import { CallClient, offerIsCall } from './call';
+import { RoomClient } from './room';
 
 /* ---------------- static data from the design ---------------- */
 
@@ -100,6 +101,9 @@ interface State {
   callPeerName: string;
   callError: string;
   incoming: { id: number; peerId: number; peerName: string; video: boolean } | null;
+  roomPhase: 'idle' | 'connecting' | 'connected' | 'error';
+  roomError: string;
+  roomPeers: number;
 }
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
@@ -157,6 +161,9 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     callPeerName: '',
     callError: '',
     incoming: null,
+    roomPhase: 'idle',
+    roomError: '',
+    roomPeers: 0,
   };
 
   private transport: Transport = createTransport();
@@ -174,6 +181,9 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   private _remoteStream: MediaStream | null = null;
   private _localEl: HTMLVideoElement | null = null;
   private _remoteEl: HTMLVideoElement | null = null;
+  private roomClient = new RoomClient(this.transport, {
+    onPhase: (roomPhase, meta) => this.setState({ roomPhase, roomError: meta.error || '', roomPeers: meta.count || 0 }),
+  });
   private _callEndTimer: ReturnType<typeof setTimeout> | null = null;
   private _handledIncoming = new Set<number>();
   private _wantScroll = false;
@@ -308,17 +318,6 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       if ((s.mode === 'video' || s.mode === 'voice') && s.callPhase === 'connected') {
         this.setState(p => ({ callSec: p.callSec + 1 }));
       }
-      if (s.mode === 'room') {
-        this._roomTick++;
-        if (this._roomTick % 4 === 0) {
-          const msg = ROOM_POOL[Math.floor(Math.random() * ROOM_POOL.length)];
-          this.scrollBottom();
-          this.setState(p => ({
-            roomFeed: [...p.roomFeed.slice(-14), msg],
-            roomCount: p.roomCount + (Math.random() < 0.5 ? 1 : -1),
-          }));
-        }
-      }
     }, 1000);
   }
 
@@ -333,6 +332,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (this._callEndTimer) clearTimeout(this._callEndTimer);
     void this.chirp.close(true);
     void this.call.hangup(true);
+    void this.roomClient.leave();
     this.transport.disconnect();
   }
 
@@ -390,6 +390,24 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   private toggleMute = () => { const m = !this.state.muted; this.call.setMuted(m); this.setState({ muted: m }); };
   private toggleCam = () => { const off = !this.state.camOff; this.call.setCameraOff(off); this.setState({ camOff: off }); };
+
+  /* ---------------- group video rooms (LiveKit) ---------------- */
+
+  // Room = the active conversation (so a group thread's members meet), else a shared lobby.
+  private enterRoom = () => {
+    this.setState({ mode: 'room', muted: false, camOff: false });
+    if (this.roomClient.active) return;
+    const t = this.state.threads.find(x => x.id === this.state.activeThreadId);
+    void this.roomClient.join(t ? `thread-${t.id}` : 'loop-lobby');
+  };
+
+  private leaveRoom = () => {
+    void this.roomClient.leave();
+    this.setState(p => ({ mode: p.mode === 'room' ? 'compose' : p.mode }));
+  };
+
+  private roomMute = () => { const m = !this.state.muted; this.roomClient.setMuted(m); this.setState({ muted: m }); };
+  private roomCam = () => { const off = !this.state.camOff; this.roomClient.setCameraOff(off); this.setState({ camOff: off }); };
 
   /* ---------------- message system wiring ---------------- */
 
@@ -592,7 +610,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     const bgOf = (key: string) => (BG_OPTS.find(b => b.key === key) || BG_OPTS[0]).bg(acc.c);
     const deviceFont = (FONT_OPTS.find(f => f.key === s.font) || FONT_OPTS[0]).stack;
     const openTo = (tab: State['tab']) => () => { this.scrollBottom(); this.setState({ open: true, slid: true, tab }); };
-    const showComposer = (s.mode === 'compose' && s.slid && !!activeThread) || s.mode === 'room';
+    const showComposer = (s.mode === 'compose' && s.slid && !!activeThread);
     const coverVisible = s.mode === 'compose' && !s.slid;
     const callTime = Math.floor(s.callSec / 60) + ':' + String(s.callSec % 60).padStart(2, '0');
     const mono = 'ui-monospace,Menlo,monospace';
@@ -840,6 +858,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           <button key={mo.key}
                             onClick={() => {
                               this.scrollBottom();
+                              if (s.mode === 'room' && mo.key !== 'room' && this.roomClient.active) void this.roomClient.leave();
+                              if (mo.key === 'room') { this.enterRoom(); return; }
                               if (mo.key === 'video' || mo.key === 'voice') {
                                 if (!this.call.busy) this.startCall(mo.key === 'video');
                                 else this.setState({ mode: mo.key });
@@ -873,21 +893,34 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                       </div>
                     )}
 
-                    {/* room */}
+                    {/* group video room — LiveKit SFU */}
                     {s.mode === 'room' && (
-                      <div style={{ borderRadius: 13, background: '#0a1117', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.5)', overflow: 'hidden' }}>
+                      <div style={{ borderRadius: 13, background: '#05090d', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.5)', overflow: 'hidden' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 11px', borderBottom: '1px solid #0f1720' }}>
-                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: acc.c, boxShadow: `0 0 6px ${acc.c}` }} />
-                          <span style={{ fontSize: 11, fontWeight: 600, color: '#e8edf2' }}>$MRAM Squeeze Room</span>
-                          <span style={{ fontFamily: mono, fontSize: 9, color: '#5c6771', marginLeft: 'auto' }}>{s.roomCount} in room</span>
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.roomPhase === 'connected' ? acc.c : '#5c6771', boxShadow: s.roomPhase === 'connected' ? `0 0 6px ${acc.c}` : 'none' }} />
+                          <span style={{ fontSize: 11, fontWeight: 600, color: '#e8edf2' }}>Group Room</span>
+                          <span style={{ fontFamily: mono, fontSize: 9, color: '#5c6771', marginLeft: 'auto' }}>{s.roomPhase === 'connected' ? `${s.roomPeers} in room` : s.roomPhase === 'connecting' ? 'connecting…' : ''}</span>
                         </div>
-                        <div style={{ height: 104, overflowY: 'auto', padding: '8px 11px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {s.roomFeed.map((r, i) => (
-                            <div key={i} style={{ fontSize: 10.5, lineHeight: 1.45, animation: 'msgIn .2s ease' }}>
-                              <span style={{ color: r.color, fontWeight: 600 }}>{r.user}</span> <span style={{ color: '#98a3ad' }}>{r.text}</span>
+                        <div style={{ position: 'relative', minHeight: 150 }}>
+                          <div ref={el => this.roomClient.setContainer(el)}
+                            style={{ display: 'grid', gap: 6, padding: 8, gridTemplateColumns: '1fr' }} />
+                          {s.roomPhase !== 'connected' && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 14, textAlign: 'center' }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: '#e8edf2' }}>{s.roomPhase === 'error' ? 'Room unavailable' : s.roomPhase === 'connecting' ? 'Joining room…' : 'Group video room'}</div>
+                              <div style={{ fontSize: 10.5, color: s.roomError ? '#ff5c7a' : '#7e8a96', maxWidth: 230, lineHeight: 1.5 }}>{s.roomError || (s.roomPhase === 'connecting' ? 'Turning on your camera and mic…' : 'Everyone in this chat can join a live video room.')}</div>
+                              {(s.roomPhase === 'idle' || s.roomPhase === 'error') && (
+                                <button onClick={this.enterRoom} style={{ padding: '9px 22px', borderRadius: 999, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: acc.c, color: acc.fg }}>Join room</button>
+                              )}
                             </div>
-                          ))}
+                          )}
                         </div>
+                        {s.roomPhase === 'connected' && (
+                          <div style={{ display: 'flex', justifyContent: 'center', gap: 10, padding: '9px 0 11px' }}>
+                            {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', this.roomMute)}
+                            {callBtn('V', s.camOff ? '#ff5c7a' : '#131d26', s.camOff ? '#fff' : '#98a3ad', this.roomCam)}
+                            {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.leaveRoom, true)}
+                          </div>
+                        )}
                       </div>
                     )}
 
