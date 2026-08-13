@@ -190,6 +190,32 @@ export function createLoopKickServer(options = {}) {
   app.post('/api/chirp/sessions/:id/signal', (req, res) => proxy(req, res, 'POST', `/sml-loop/v1/chirp/sessions/${Number(req.params.id)}/signal`, req.body));
   app.post('/api/chirp/sessions/:id/end', (req, res) => proxy(req, res, 'POST', `/sml-loop/v1/chirp/sessions/${Number(req.params.id)}/end`, req.body));
 
+  // ---- market data (read-only) ----
+  // Proxies to the moomoo OpenD bridge running on the user's PC, reached via a
+  // Cloudflare tunnel whose URL is set in the QUOTE_UPSTREAM env var. Cached ~2s
+  // and CORS-open (quotes are public, read-only). If the bridge is unreachable
+  // (PC off / tunnel down) we return an empty quote set so the site shows "—"
+  // and never fabricates a price.
+  const QUOTE_UPSTREAM = (process.env.QUOTE_UPSTREAM || '').replace(/\/+$/, '');
+  let quoteCache = { at: 0, body: null };
+  app.get('/api/quotes', async (_req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store');
+    if (!QUOTE_UPSTREAM) return res.json({ ok: false, reason: 'no-upstream', quotes: {} });
+    const now = Date.now();
+    if (quoteCache.body && now - quoteCache.at < 2000) return res.json(quoteCache.body);
+    try {
+      const r = await fetch(`${QUOTE_UPSTREAM}/quotes`, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) throw new Error(`upstream ${r.status}`);
+      const data = await r.json();
+      quoteCache = { at: now, body: { ok: true, quotes: data.quotes || {}, age: data.age ?? null } };
+      return res.json(quoteCache.body);
+    } catch {
+      if (quoteCache.body && now - quoteCache.at < 30000) return res.json({ ...quoteCache.body, stale: true });
+      return res.json({ ok: false, reason: 'upstream-unreachable', quotes: {} });
+    }
+  });
+
   if (fs.existsSync(distDir)) {
     app.use(express.static(distDir, { index: false, maxAge: '1h' }));
     app.use((req, res, next) => {
