@@ -210,7 +210,7 @@ export function createLoopKickServer(options = {}) {
     const hit = quoteCache.get(key);
     if (hit && now - hit.at < 10000) return res.json(hit.body);
     try {
-      const url = `${MASSIVE_BASE}/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(key)}`;
+      const url = `${MASSIVE_BASE}/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(key)}&include_otc=true`;
       const r = await fetch(url, { headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(6000) });
       if (!r.ok) throw new Error(`massive ${r.status}`);
       const data = await r.json();
@@ -225,6 +225,7 @@ export function createLoopKickServer(options = {}) {
           chg: chg == null ? null : Math.round(chg * 100) / 100,
           pct: pct == null ? null : Math.round(pct * 100) / 100,
           vol: t.day?.v ?? null,
+          pc: t.prevDay?.c ?? null,
           t: t.updated ? new Date(Math.floor(t.updated / 1e6)).toISOString().slice(11, 19) : null,
         };
       }
@@ -234,6 +235,44 @@ export function createLoopKickServer(options = {}) {
     } catch {
       if (hit && now - hit.at < 60000) return res.json({ ...hit.body, stale: true });
       return res.json({ ok: false, reason: 'upstream-error', quotes: {} });
+    }
+  });
+
+  // Company logo per ticker, via massive.com ticker branding. Image bytes are
+  // cached in memory (7d, misses 1h) so massive is hit at most once per symbol.
+  const logoCache = new Map(); // SYM -> { at, type, buf } (buf null = known miss)
+  app.get('/api/logo/:sym', async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    const sym = String(req.params.sym || '').toUpperCase().replace(/[^A-Z0-9.\-]/g, '').slice(0, 10);
+    if (!sym || !MASSIVE_KEY) return res.status(404).end();
+    const now = Date.now();
+    const hit = logoCache.get(sym);
+    if (hit && now - hit.at < (hit.buf ? 6048e5 : 36e5)) {
+      if (!hit.buf) return res.status(404).end();
+      res.set('Content-Type', hit.type); res.set('Cache-Control', 'public, max-age=86400');
+      return res.send(hit.buf);
+    }
+    try {
+      const r = await fetch(`${MASSIVE_BASE}/v3/reference/tickers/${encodeURIComponent(sym)}`, {
+        headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(6000),
+      });
+      if (!r.ok) throw new Error(`ref ${r.status}`);
+      const j = await r.json();
+      const url = j.results?.branding?.icon_url || j.results?.branding?.logo_url;
+      if (!url) throw new Error('no-branding');
+      let img = await fetch(url, { headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(6000) });
+      if (!img.ok) img = await fetch(`${url}${url.includes('?') ? '&' : '?'}apiKey=${MASSIVE_KEY}`, { signal: AbortSignal.timeout(6000) });
+      if (!img.ok) throw new Error(`img ${img.status}`);
+      const buf = Buffer.from(await img.arrayBuffer());
+      const type = img.headers.get('content-type') || 'image/png';
+      if (logoCache.size > 300) logoCache.delete(logoCache.keys().next().value);
+      logoCache.set(sym, { at: now, type, buf });
+      res.set('Content-Type', type); res.set('Cache-Control', 'public, max-age=86400');
+      return res.send(buf);
+    } catch {
+      if (logoCache.size > 300) logoCache.delete(logoCache.keys().next().value);
+      logoCache.set(sym, { at: now, type: '', buf: null });
+      return res.status(404).end();
     }
   });
 
