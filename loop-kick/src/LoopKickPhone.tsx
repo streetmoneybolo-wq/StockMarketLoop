@@ -535,14 +535,14 @@ export default class LoopKickPhone extends React.Component<Props, State> {
             {/* ---- top fold ---- */}
             <div style={{ height: s.slid ? screen + 148 : 0, overflow: 'visible', transition: 'height .42s cubic-bezier(.2,.8,.25,1)', display: 'flex', alignItems: 'flex-end' }}>
               <div ref={this._topSurface} style={{ width: 352, position: 'relative', isolation: 'isolate', borderRadius: 34, padding: 3, background: 'linear-gradient(145deg,#aab6c2 0%,#4a545f 16%,#14181d 46%,#0a0d10 58%,#39434e 82%,#7d8a97 100%)', boxShadow: `inset 0 1px 1.5px rgba(255,255,255,.7), inset 0 -1px 2px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.5), 0 0 34px -6px ${acc.c}3a, 0 46px 90px -34px ${acc.c}30`, zIndex: 2, transformOrigin: 'center bottom', transform: s.slid ? 'rotateX(0deg)' : 'rotateX(-89deg)', opacity: s.slid ? 1 : 0, pointerEvents: s.slid ? 'auto' : 'none', transition: 'transform .42s cubic-bezier(.2,.8,.25,1), opacity .32s ease' }}>
-                <div style={{ position: 'absolute', inset: 0, borderRadius: 34, background: 'radial-gradient(130px 95px at 16% 10%, rgba(255,255,255,.5) 0%, rgba(255,255,255,.13) 32%, transparent 60%)', pointerEvents: 'none', zIndex: 3, mixBlendMode: 'overlay' }} />
+                <div style={{ position: 'absolute', inset: 0, borderRadius: 34, background: 'radial-gradient(130px 95px at 16% 10%, rgba(255,255,255,.5) 0%, rgba(255,255,255,.13) 32%, transparent 60%)', pointerEvents: 'none', zIndex: 3 }} />
                 <div style={{ position: 'absolute', right: -3, top: 70, width: 4, height: 52, borderRadius: '0 3px 3px 0', background: acc.c, boxShadow: `1px 0 3px ${acc.c}66` }} />
                 <div style={{ position: 'absolute', right: -3, top: 134, width: 4, height: 70, borderRadius: '0 3px 3px 0', background: 'linear-gradient(#39424c,#12161b)' }} />
                 <div style={{ position: 'absolute', left: -3, top: 92, width: 4, height: 40, borderRadius: '3px 0 0 3px', background: 'linear-gradient(#39424c,#12161b)' }} />
 
                 <div style={{ borderRadius: 31, background: '#010304', padding: '10px 10px 12px', position: 'relative', overflow: 'hidden' }}>
-                  <div style={{ position: 'absolute', inset: 0, borderRadius: 31, background: 'linear-gradient(122deg, rgba(255,255,255,.19) 0%, rgba(255,255,255,.07) 11%, rgba(255,255,255,.015) 20%, transparent 30%, transparent 68%, rgba(255,255,255,.03) 84%, rgba(255,255,255,.12) 100%)', pointerEvents: 'none', zIndex: 6, mixBlendMode: 'screen' }} />
-                  <div className="lk-sheen" style={{ position: 'absolute', top: -24, bottom: -24, left: 0, width: '34%', pointerEvents: 'none', zIndex: 7, background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,.05) 38%, rgba(255,255,255,.17) 50%, rgba(255,255,255,.05) 62%, transparent 100%)', mixBlendMode: 'screen' }} />
+                  <div style={{ position: 'absolute', inset: 0, borderRadius: 31, background: 'linear-gradient(122deg, rgba(255,255,255,.19) 0%, rgba(255,255,255,.07) 11%, rgba(255,255,255,.015) 20%, transparent 30%, transparent 68%, rgba(255,255,255,.03) 84%, rgba(255,255,255,.12) 100%)', pointerEvents: 'none', zIndex: 6 }} />
+                  <div className="lk-sheen" style={{ position: 'absolute', top: -24, bottom: -24, left: 0, width: '34%', pointerEvents: 'none', zIndex: 7, background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,.05) 38%, rgba(255,255,255,.17) 50%, rgba(255,255,255,.05) 62%, transparent 100%)' }} />
 
                   {/* notch row */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '2px 0 8px', position: 'relative' }}>
@@ -554,8 +554,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                   {/* top screen */}
                   <div style={{ borderRadius: 18, overflow: 'hidden', background: bgOf(s.topBgKey), position: 'relative', boxShadow: `inset 0 1.5px 0 rgba(255,255,255,.14), inset 0 -1px 1px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.06), inset 0 0 26px -8px ${acc.c}30` }}>
                     {/* screen-on bloom (emissive) + faint environment reflection on the glass */}
-                    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 4, background: `radial-gradient(135% 78% at 50% 22%, ${acc.c}14 0%, transparent 54%)`, mixBlendMode: 'screen' }} />
-                    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 8, background: 'linear-gradient(178deg, rgba(196,216,238,.08) 0%, rgba(196,216,238,.02) 16%, transparent 40%, transparent 74%, rgba(30,48,74,.06) 100%)', mixBlendMode: 'screen' }} />
+                    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 4, background: `radial-gradient(135% 78% at 50% 22%, ${acc.c}14 0%, transparent 54%)` }} />
+                    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 8, background: 'linear-gradient(178deg, rgba(196,216,238,.08) 0%, rgba(196,216,238,.02) 16%, transparent 40%, transparent 74%, rgba(30,48,74,.06) 100%)' }} />
                     {wm(44, 4)}
                     {/* status bar */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px 4px', fontFamily: mono, fontSize: 9, letterSpacing: 0.6, color: '#7e8a96' }}>
