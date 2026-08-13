@@ -265,6 +265,11 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       previousState.open !== this.state.open
       || previousState.slid !== this.state.slid
       || previousState.vh !== this.state.vh
+      // Mode/call/room changes resize the device (e.g. Video call grows it tall) —
+      // re-report the surface so the bridge resizes the iframe and nothing clips.
+      || previousState.mode !== this.state.mode
+      || previousState.callPhase !== this.state.callPhase
+      || previousState.roomPhase !== this.state.roomPhase
     ) {
       this.scheduleEmbedSurface();
     }
