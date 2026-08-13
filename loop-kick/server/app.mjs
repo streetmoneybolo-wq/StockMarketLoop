@@ -276,17 +276,32 @@ export function createLoopKickServer(options = {}) {
     }
   });
 
-  // WebRTC ICE config for voice/video calls. STUN is always included; a TURN
-  // server (needed for calls across different networks / mobile data) is added
-  // when TURN_URLS + TURN_USERNAME + TURN_CREDENTIAL env vars are set.
-  app.get('/api/ice', (_req, res) => {
+  // WebRTC ICE config for voice/video calls (STUN + TURN). Two easy ways to add
+  // TURN (needed for cross-network / mobile calls):
+  //  1. EASIEST — set METERED_TURN_URL to the one "credentials URL" from your
+  //     Metered.ca dashboard; the server fetches the full TURN list from it.
+  //  2. Manual — set TURN_URLS + TURN_USERNAME + TURN_CREDENTIAL for any provider.
+  let iceCache = { at: 0, servers: null };
+  app.get('/api/ice', async (_req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'no-store');
+    const now = Date.now();
+    if (iceCache.servers && now - iceCache.at < 300000) return res.json({ iceServers: iceCache.servers });
     const iceServers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
     const turnUrls = String(process.env.TURN_URLS || '').split(',').map((s) => s.trim()).filter(Boolean);
     if (turnUrls.length && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
       iceServers.push({ urls: turnUrls, username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL });
     }
+    if (process.env.METERED_TURN_URL) {
+      try {
+        const r = await fetch(process.env.METERED_TURN_URL, { signal: AbortSignal.timeout(4000) });
+        if (r.ok) {
+          const list = await r.json();
+          if (Array.isArray(list)) list.forEach((s) => { if (s && s.urls) iceServers.push(s); });
+        }
+      } catch { /* keep STUN + any manual TURN */ }
+    }
+    iceCache = { at: now, servers: iceServers };
     res.json({ iceServers });
   });
 
