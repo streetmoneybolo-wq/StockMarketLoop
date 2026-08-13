@@ -112,7 +112,9 @@ export class CallClient {
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') this.set('connected');
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') void this.hangup(false);
+      // Only give up on a hard ICE failure. 'disconnected' is often transient and
+      // recovers on its own; 'closed' only happens when we tear down ourselves.
+      if (pc.connectionState === 'failed') void this.hangup(false);
     };
     if (this.local) for (const track of this.local.getTracks()) pc.addTrack(track, this.local);
     return pc;
@@ -148,12 +150,15 @@ export class CallClient {
     await this.addIce(view);
   }
 
+  private pollFails = 0;
   private poll = async () => {
     if (!this.sessionId || !this.pc) return;
-    try { await this.applySignal(await this.transport.chirpSignal(this.sessionId) as SignalView); }
-    catch { await this.hangup(false); return; }
+    // A single failed signal fetch is usually a transient network/proxy blip — do
+    // NOT drop the call for it. Only give up after several consecutive failures.
+    try { await this.applySignal(await this.transport.chirpSignal(this.sessionId) as SignalView); this.pollFails = 0; }
+    catch { if (++this.pollFails >= 6) { await this.hangup(false); return; } }
     if (this.sessionId && this.pc && this.pc.connectionState !== 'closed') {
-      this.signalTimer = setTimeout(this.poll, this.pc.connectionState === 'connected' ? 1500 : 250);
+      this.signalTimer = setTimeout(this.poll, this.pc.connectionState === 'connected' ? 1500 : 300);
     }
   };
 
