@@ -232,3 +232,25 @@ export function createTransport(): Transport {
   const cfg = (typeof window !== 'undefined' && window.LOOP_KICK_CONFIG) || {};
   return cfg.transport === 'live' ? liveTransport(cfg) : mockTransport();
 }
+
+/* ---------------- Watch deck data (live stream + uploaded videos) ---------------- */
+
+export interface WatchVideo { id: number; title: string; url: string; date: string; }
+export interface WatchData {
+  live: { active: boolean; playback: string; ytId: string; title: string };
+  viewers: number;
+  videos: WatchVideo[];
+}
+
+/** Same-origin /api/watch — the server aggregates the live feed, the current
+ *  YouTube stream, uploaded videos, and the watch-page viewer count. */
+export async function fetchWatch(): Promise<WatchData | null> {
+  try {
+    const response = await fetch('/api/watch', { signal: AbortSignal.timeout(9000) });
+    if (!response.ok) return null;
+    const body = (await response.json()) as WatchData;
+    return body && body.live ? body : null;
+  } catch {
+    return null;
+  }
+}

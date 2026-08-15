@@ -7,7 +7,7 @@
  * the rendered device matches the approved design.
  */
 import React from 'react';
-import { BootstrapData, createTransport, Person, SiteNotification, ThreadSummary, Transport, WireMessage } from './transport';
+import { BootstrapData, createTransport, fetchWatch, Person, SiteNotification, ThreadSummary, Transport, WatchData, WireMessage } from './transport';
 import { LiveChirpClient } from './liveChirp';
 import { CallClient, offerIsCall } from './call';
 import { RoomClient } from './room';
@@ -104,6 +104,8 @@ interface State {
   roomPhase: 'idle' | 'connecting' | 'connected' | 'error';
   roomError: string;
   roomPeers: number;
+  watchData: WatchData | null;
+  watchSel: number; // -1 = live stream, otherwise index into watchData.videos
 }
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
@@ -126,6 +128,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     playing: true,
     watchSec: 47,
     viewers: 1284,
+    watchData: null,
+    watchSel: -1,
     callSec: 0,
     muted: false,
     camOff: false,
@@ -317,8 +321,10 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     this._interval = setInterval(() => {
       const s = this.state;
       if (!s.open || !s.slid) return;
+      if (s.mode === 'watch') this.loadWatch();
       if (s.mode === 'watch' && s.playing) {
-        this.setState(p => ({ watchSec: p.watchSec + 1, viewers: p.viewers + (Math.random() < 0.3 ? 1 : 0) }));
+        // real viewer count arrives with watchData — only simulate before it loads
+        this.setState(p => ({ watchSec: p.watchSec + 1, viewers: p.watchData ? p.viewers : p.viewers + (Math.random() < 0.3 ? 1 : 0) }));
       }
       if ((s.mode === 'video' || s.mode === 'voice') && s.callPhase === 'connected') {
         this.setState(p => ({ callSec: p.callSec + 1 }));
@@ -339,6 +345,18 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     void this.call.hangup(true);
     void this.roomClient.leave();
     this.transport.disconnect();
+  }
+
+  /* ---------------- watch deck: real live stream + uploads ---------------- */
+
+  private _watchAt = 0;
+  private _watchEl: HTMLVideoElement | null = null;
+  private loadWatch() {
+    if (Date.now() - this._watchAt < 30000) return;
+    this._watchAt = Date.now();
+    void fetchWatch().then(data => {
+      if (data) this.setState(p => ({ watchData: data, viewers: data.viewers > 0 ? data.viewers : p.viewers }));
+    });
   }
 
   /* ---------------- voice / video calls ---------------- */
@@ -933,33 +951,85 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                     )}
 
                     {/* watch */}
-                    {s.mode === 'watch' && (
+                    {s.mode === 'watch' && (() => {
+                      const wd = s.watchData;
+                      const sel = wd && s.watchSel >= 0 ? wd.videos[s.watchSel] : null;
+                      const liveSrc = wd && !sel ? (wd.live.playback || '') : '';
+                      const ytId = wd && !sel && !liveSrc ? wd.live.ytId : '';
+                      const vidSrc = sel ? sel.url : liveSrc;
+                      const hasMedia = !!(vidSrc || ytId);
+                      const isLive = !sel && !!wd && wd.live.active;
+                      const title = sel ? sel.title : (wd && wd.live.title) || 'Market Open — Loop Live Desk';
+                      const sub = sel ? `Upload · ${sel.date}` : (wd && !wd.live.active ? 'Desk is offline — uploads below' : 'Streaming from Loop Hub');
+                      return (
                       <div style={{ borderRadius: 13, overflow: 'hidden', background: '#0a1117', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.5)' }}>
                         <div style={{ height: 118, position: 'relative', background: 'repeating-linear-gradient(135deg,#0d141b 0 12px,#090f15 12px 24px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <div className="lk-play" onClick={() => this.setState(p => ({ playing: !p.playing }))} style={{ width: 42, height: 42, borderRadius: '50%', background: 'rgba(0,0,0,.55)', border: `1px solid ${acc.c}88`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                          {vidSrc && s.playing && (
+                            <video key={vidSrc} ref={el => { this._watchEl = el; }} src={vidSrc} autoPlay playsInline muted={!sel}
+                              controls={false} onClick={() => { const el = this._watchEl; if (el) { el.muted = false; void el.play().catch(() => {}); } }}
+                              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', background: '#000' }} />
+                          )}
+                          {ytId && s.playing && (
+                            <iframe key={ytId} src={`https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1`}
+                              allow="autoplay; encrypted-media; picture-in-picture" title="Loop live stream"
+                              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, background: '#000' }} />
+                          )}
+                          <div className="lk-play" onClick={() => this.setState(p => ({ playing: !p.playing }))} style={{ width: 42, height: 42, borderRadius: '50%', background: 'rgba(0,0,0,.55)', border: `1px solid ${acc.c}88`, display: hasMedia && s.playing ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', zIndex: 2 }}>
                             {s.playing ? (
                               <span style={{ display: 'flex', gap: 3 }}><span style={{ width: 4, height: 14, background: acc.c }} /><span style={{ width: 4, height: 14, background: acc.c }} /></span>
                             ) : (
                               <span style={{ width: 0, height: 0, borderLeft: `13px solid ${acc.c}`, borderTop: '8px solid transparent', borderBottom: '8px solid transparent', marginLeft: 3 }} />
                             )}
                           </div>
-                          <span style={{ position: 'absolute', top: 7, left: 8, display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: '#ff5c7a' }}>
-                            <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#ff3b5c' }} />LIVE
-                          </span>
-                          <span style={{ position: 'absolute', top: 7, right: 8, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, color: '#98a3ad' }}>{s.viewers.toLocaleString()} watching</span>
-                          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, background: '#0f1720' }}>
+                          {hasMedia && s.playing && (
+                            <div onClick={() => this.setState({ playing: false })} title="Pause"
+                              style={{ position: 'absolute', top: 26, left: 8, zIndex: 3, padding: '3px 7px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, color: '#98a3ad', cursor: 'pointer' }}>❚❚</div>
+                          )}
+                          {(!wd || isLive) ? (
+                            <span style={{ position: 'absolute', top: 7, left: 8, zIndex: 3, display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: '#ff5c7a' }}>
+                              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#ff3b5c' }} />LIVE
+                            </span>
+                          ) : (
+                            <span style={{ position: 'absolute', top: 7, left: 8, zIndex: 3, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: '#5c6771' }}>{sel ? 'UPLOAD' : 'OFFLINE'}</span>
+                          )}
+                          <span style={{ position: 'absolute', top: 7, right: 8, zIndex: 3, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, color: '#98a3ad' }}>{s.viewers.toLocaleString()} watching</span>
+                          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, background: '#0f1720', zIndex: 3 }}>
                             <div style={{ height: '100%', width: Math.min(100, (s.watchSec % 180) / 1.8) + '%', background: acc.c, transition: 'width 1s linear' }} />
                           </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px' }}>
+                        <div onClick={() => window.open('https://stockmarketloop.com/live/', '_blank', 'noopener')} title="Open the full watch page"
+                          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', cursor: 'pointer' }}>
                           <div style={{ width: 22, height: 22, borderRadius: 7, flex: 'none', background: 'linear-gradient(140deg,#b98cff,#8a55e0)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.25)' }} />
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: '#e8edf2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Market Open — Loop Live Desk</div>
-                            <div style={{ fontSize: 9.5, color: '#5c6771' }}>Streaming from Loop Hub</div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: '#e8edf2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
+                            <div style={{ fontSize: 9.5, color: '#5c6771' }}>{sub}</div>
                           </div>
                         </div>
+                        {wd && wd.videos.length > 0 && (
+                          <div style={{ borderTop: '1px solid rgba(255,255,255,.05)', padding: '7px 11px 9px' }}>
+                            <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: '#5c6771', marginBottom: 6 }}>UPLOADS</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 96, overflowY: 'auto' }}>
+                              {wd.live.active && (
+                                <div onClick={() => this.setState({ watchSel: -1, playing: true })}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 7px', borderRadius: 8, cursor: 'pointer', background: s.watchSel === -1 ? 'rgba(255,255,255,.05)' : 'transparent' }}>
+                                  <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#ff3b5c', flex: 'none' }} />
+                                  <span style={{ fontSize: 10.5, color: s.watchSel === -1 ? acc.c : '#c3ccd4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Live now — back to the stream</span>
+                                </div>
+                              )}
+                              {wd.videos.map((v, i) => (
+                                <div key={v.id} onClick={() => this.setState({ watchSel: i, playing: true })}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 7px', borderRadius: 8, cursor: 'pointer', background: s.watchSel === i ? 'rgba(255,255,255,.05)' : 'transparent' }}>
+                                  <span style={{ width: 0, height: 0, flex: 'none', borderLeft: `7px solid ${s.watchSel === i ? acc.c : '#5c6771'}`, borderTop: '4px solid transparent', borderBottom: '4px solid transparent' }} />
+                                  <span style={{ fontSize: 10.5, color: s.watchSel === i ? acc.c : '#c3ccd4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{v.title}</span>
+                                  <span style={{ fontFamily: mono, fontSize: 8.5, color: '#5c6771', flex: 'none' }}>{v.date}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
+                      );
+                    })()}
 
                     {/* video call — real getUserMedia + WebRTC */}
                     {s.mode === 'video' && (
