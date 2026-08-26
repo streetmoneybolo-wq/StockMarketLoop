@@ -144,6 +144,32 @@ export function createLoopKickServer(options = {}) {
     res.json({ ok: true, service: 'loop-kick', source: 'wordpress-messenger' });
   });
 
+  /* Liveness: tiny, no external calls — safe for Render health checks and
+     uptime probes. */
+  app.get('/healthz', (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ ok: true, service: 'loop-kick', uptime_s: Math.round(process.uptime()) });
+  });
+
+  /* Readiness: verifies the one essential upstream (the WordPress REST
+     gateway) with a short timeout. Reports status only — never credentials. */
+  app.get('/readyz', async (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const base = (process.env.LOOP_KICK_GATEWAY_URL || DEFAULT_GATEWAY_URL).replace(/\/wp-json\/.*$/, '/wp-json/');
+    let wordpress = 'unreachable';
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 2500);
+      const r = await fetch(base, { method: 'HEAD', signal: ctl.signal });
+      clearTimeout(timer);
+      wordpress = r.ok || r.status === 405 ? 'ok' : `status_${r.status}`;
+    } catch {
+      wordpress = 'unreachable';
+    }
+    const ready = wordpress === 'ok';
+    res.status(ready ? 200 : 503).json({ ok: ready, service: 'loop-kick', wordpress });
+  });
+
   app.get('/api/bootstrap', async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
