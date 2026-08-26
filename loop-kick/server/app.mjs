@@ -155,18 +155,20 @@ export function createLoopKickServer(options = {}) {
      gateway) with a short timeout. Reports status only — never credentials. */
   app.get('/readyz', async (_req, res) => {
     res.set('Cache-Control', 'no-store');
-    const base = (process.env.LOOP_KICK_GATEWAY_URL || DEFAULT_GATEWAY_URL).replace(/\/wp-json\/.*$/, '/wp-json/');
+    /* reachability check: ANY HTTP status from the session route proves the
+       WordPress upstream is up (an unauthenticated probe correctly gets 401) */
+    const probe = process.env.LOOP_KICK_SESSION_URL || DEFAULT_SESSION_URL;
     let wordpress = 'unreachable';
     try {
       const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 2500);
-      const r = await fetch(base, { method: 'HEAD', signal: ctl.signal });
+      const timer = setTimeout(() => ctl.abort(), 4000);
+      const r = await fetch(probe, { method: 'GET', signal: ctl.signal, headers: { accept: 'application/json' } });
       clearTimeout(timer);
-      wordpress = r.ok || r.status === 405 ? 'ok' : `status_${r.status}`;
+      wordpress = 'ok_status_' + r.status;
     } catch {
       wordpress = 'unreachable';
     }
-    const ready = wordpress === 'ok';
+    const ready = wordpress.indexOf('ok') === 0;
     res.status(ready ? 200 : 503).json({ ok: ready, service: 'loop-kick', wordpress });
   });
 
