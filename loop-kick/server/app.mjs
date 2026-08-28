@@ -238,11 +238,39 @@ export function createLoopKickServer(options = {}) {
     const hit = quoteCache.get(key);
     if (hit && now - hit.at < 10000) return res.json(hit.body);
     try {
-      const url = `${MASSIVE_BASE}/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(key)}&include_otc=true`;
-      const r = await fetch(url, { headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(6000) });
-      if (!r.ok) throw new Error(`massive ${r.status}`);
-      const data = await r.json();
+      // BTC is crypto: it rides Kraken's public ticker (real, live, no key),
+      // never the stocks snapshot. Everything else stays on Massive.
+      const wantBtc = syms.includes('BTC');
+      const stockSyms = syms.filter((x) => x !== 'BTC');
       const quotes = {};
+      let data = { tickers: [] };
+      if (stockSyms.length) {
+        const url = `${MASSIVE_BASE}/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(stockSyms.join(','))}&include_otc=true`;
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(6000) });
+        if (!r.ok) throw new Error(`massive ${r.status}`);
+        data = await r.json();
+      }
+      if (wantBtc) {
+        try {
+          const kr = await fetch('https://api.kraken.com/0/public/Ticker?pair=XBTUSD', { signal: AbortSignal.timeout(5000) });
+          const kj = await kr.json();
+          const tick = kj && kj.result && kj.result[Object.keys(kj.result)[0]];
+          const last = tick ? Number(tick.c?.[0]) : NaN;
+          const open = tick ? Number(tick.o) : NaN;
+          const vol24 = tick ? Number(tick.v?.[1]) : NaN;
+          if (Number.isFinite(last) && last > 0 && Number.isFinite(open) && open > 0) {
+            quotes.BTC = {
+              sym: 'BTC',
+              last: Math.round(last * 100) / 100,
+              chg: Math.round((last - open) * 100) / 100,
+              pct: Math.round(((last - open) / open) * 10000) / 100,
+              vol: Number.isFinite(vol24) ? Math.round(vol24 * last) : null, // 24h notional USD
+              pc: Math.round(open * 100) / 100, // today's UTC open — crypto has no close
+              t: new Date().toISOString().slice(11, 19),
+            };
+          }
+        } catch { /* BTC row degrades to em-dashes; stocks still serve */ }
+      }
       for (const t of (data.tickers || [])) {
         const last = t.lastTrade?.p ?? t.day?.c ?? t.prevDay?.c ?? null;
         const chg = typeof t.todaysChange === 'number' ? t.todaysChange : null;
