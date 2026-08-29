@@ -293,6 +293,7 @@ export function createLoopKickServer(options = {}) {
         };
       }
       const body = { ok: true, quotes };
+      if (quoteCache.size > 300) quoteCache.delete(quoteCache.keys().next().value);
       quoteCache.set(key, { at: now, body });
       try { tape.ingest(quotes); } catch { /* the tape must never break quotes */ }
       return res.json(body);

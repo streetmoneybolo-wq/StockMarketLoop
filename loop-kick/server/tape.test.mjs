@@ -13,7 +13,7 @@ function makeEngine({ open = true } = {}) {
   };
 }
 
-const q = (sym, last, pct, vol, hi = null, lo = null) => ({ [sym]: { sym, last, pct, vol, hi, lo } });
+const q = (sym, last, pct, vol, hi = null, lo = null, pc = null) => ({ [sym]: { sym, last, pct, vol, hi, lo, pc } });
 
 test('unchanged snapshots produce no samples and no events', () => {
   const { engine, tick } = makeEngine();
@@ -76,6 +76,39 @@ test('closed session ignores stocks but BTC still runs price families', () => {
   const fams = engine.snapshot().events.map((e) => `${e.sym}:${e.family}`);
   assert.ok(fams.some((f) => f.startsWith('BTC:')), 'BTC should fire');
   assert.ok(!fams.some((f) => f.startsWith('SPY:')), 'closed-session stock must not fire');
+});
+
+test('BTC detects moves even though its 24h notional volume jitters down', () => {
+  const { engine, tick } = makeEngine({ open: false });
+  // vol wobbles up AND down every sample — must not wipe the ring; the
+  // baseline must outlast the 10-min Skyrocket window
+  for (let i = 0; i < 70; i++) tick(10_000, q('BTC', 77_000 + i, 0.05 + i * 0.001, 5_000_000_000 + (i % 2 ? -3_000_000 : 4_000_000)));
+  tick(10_000, q('BTC', 79_600, 3.4, 5_010_000_000));
+  const fams = engine.snapshot().events.map((e) => e.family);
+  assert.ok(fams.includes('SKYROCKET'), 'expected SKYROCKET, got ' + fams.join(','));
+});
+
+test('a pct-baseline rebase (UTC-midnight open / new prev close) never fires', () => {
+  const { engine, tick } = makeEngine({ open: false });
+  // steady +4% day all evening, price flat
+  for (let i = 0; i < 36; i++) tick(10_000, q('BTC', 77_000, 4.0, null, null, null, 74_000));
+  // midnight UTC: pct rebases to ~0 with the SAME price — must be silent
+  tick(10_000, q('BTC', 77_000, 0.01, null, null, null, 76_990));
+  tick(10_000, q('BTC', 77_005, 0.02, null, null, null, 76_990));
+  assert.equal(engine.snapshot().events.length, 0);
+});
+
+test('a hostile flood of symbols stays bounded', () => {
+  const { engine, tick } = makeEngine();
+  for (let batch = 0; batch < 10; batch++) {
+    const quotes = {};
+    for (let i = 0; i < 60; i++) {
+      const sym = 'FAKE' + batch + '_' + i;
+      quotes[sym] = { sym, last: 10 + i, pct: 0.1, vol: 1_000_000 + batch };
+    }
+    tick(10_000, quotes);
+  }
+  assert.ok(engine.snapshot().universe.length <= 200, 'universe must stay capped');
 });
 
 test('counts tally bullish vs bearish', () => {

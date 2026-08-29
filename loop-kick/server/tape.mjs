@@ -64,9 +64,22 @@ export function createTapeEngine(opts = {}) {
     return !['Sat', 'Sun'].includes(et.weekday) && et.minutes >= 570 && et.minutes < 960; // 9:30–16:00
   });
 
-  const rings = new Map();      // SYM -> [{ts,last,pct,vol,hi,lo}]
+  const MAX_SYMBOLS = 200;      // /api/quotes accepts arbitrary public symbol sets — bound the state
+  const rings = new Map();      // SYM -> [{ts,last,pct,vol,hi,lo,pc}]
   const cooldowns = new Map();  // 'SYM:FAMILY' -> ts
   const symLast = new Map();    // SYM -> ts of last event
+
+  function evictOldest() {
+    let oldSym = null; let oldTs = Infinity;
+    for (const [sym, ring] of rings) {
+      const ts = ring.length ? ring[ring.length - 1].ts : 0;
+      if (ts < oldTs) { oldTs = ts; oldSym = sym; }
+    }
+    if (oldSym === null) return;
+    rings.delete(oldSym);
+    symLast.delete(oldSym);
+    for (const key of cooldowns.keys()) { if (key.startsWith(oldSym + ':')) cooldowns.delete(key); }
+  }
   let events = [];              // newest LAST internally
   let seq = 0;
   let counts = { date: etParts(now()).date, bull: 0, bear: 0 };
@@ -86,7 +99,7 @@ export function createTapeEngine(opts = {}) {
     symLast.set(sym, ts);
     const dir = BULLISH.has(family) ? 1 : -1;
     if (dir > 0) counts.bull += 1; else counts.bear += 1;
-    events.push({ id: ++seq, ts, et: etParts(ts).hms, sym, family, dir, ...data });
+    events.push({ ...data, id: ++seq, ts, et: etParts(ts).hms, d: counts.date, sym, family, dir });
     if (events.length > MAX_EVENTS) events = events.slice(-MAX_EVENTS);
     return true;
   }
@@ -162,13 +175,22 @@ export function createTapeEngine(opts = {}) {
       const isBtc = sym === 'BTC';
       if (!isBtc && !open) continue;
       let ring = rings.get(sym);
-      if (!ring) { ring = []; rings.set(sym, ring); }
-      const prev = ring[ring.length - 1];
-      // day-volume reset (new session) invalidates every window — start clean
-      if (prev && Number.isFinite(prev.vol) && Number.isFinite(q.vol) && q.vol < prev.vol) ring.length = 0;
+      if (!ring) {
+        if (rings.size >= MAX_SYMBOLS) evictOldest();
+        ring = []; rings.set(sym, ring);
+      }
+      let prev = ring[ring.length - 1];
+      const pcNow = Number.isFinite(q.pc) ? q.pc : null;
+      // A changed pct baseline (prev close / BTC's UTC open) rebases the day-%
+      // scale — every window across it would be a fabricated move. Volume
+      // dropping is the stocks new-session tell (BTC's 24h notional jitters
+      // down routinely, so it is exempt). Either way: start the ring clean.
+      const rebased = prev && prev.pc !== null && pcNow !== null && pcNow !== prev.pc;
+      const newDayVol = !isBtc && prev && Number.isFinite(prev.vol) && Number.isFinite(q.vol) && q.vol < prev.vol;
+      if (rebased || newDayVol) { ring.length = 0; prev = undefined; }
       // unchanged price+volume carries no information (closed/quiet feed)
       if (prev && prev.last === q.last && prev.vol === q.vol) continue;
-      ring.push({ ts, last: q.last, pct: Number.isFinite(q.pct) ? q.pct : null, vol: Number.isFinite(q.vol) ? q.vol : null, hi: Number.isFinite(q.hi) ? q.hi : null, lo: Number.isFinite(q.lo) ? q.lo : null });
+      ring.push({ ts, last: q.last, pct: Number.isFinite(q.pct) ? q.pct : null, vol: Number.isFinite(q.vol) ? q.vol : null, hi: Number.isFinite(q.hi) ? q.hi : null, lo: Number.isFinite(q.lo) ? q.lo : null, pc: pcNow });
       while (ring.length && ring[0].ts < ts - RING_MS) ring.shift();
       detect(sym, ring, q, ts, isBtc);
     }
@@ -183,7 +205,9 @@ export function createTapeEngine(opts = {}) {
     }
     return {
       ok: true,
-      events: [...events].reverse(),
+      // only the current ET day's tape — yesterday's rows rendered as
+      // time-only timestamps would read as today's
+      events: events.filter((e) => e.d === counts.date).reverse(),
       counts: { bull: counts.bull, bear: counts.bear, date: counts.date },
       session: { open: sessionOpen(ts), et: etParts(ts).hms },
       universe: universe.sort(),
