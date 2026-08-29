@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 import express from 'express';
 
+import { createTapeEngine } from './tape.mjs';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_SESSION_URL = 'https://stockmarketloop.com/wp-json/sml-loop-kick/v1/session';
 const DEFAULT_GATEWAY_URL = 'https://stockmarketloop.com/wp-json/sml-loop-kick/v1/gateway';
@@ -227,6 +229,9 @@ export function createLoopKickServer(options = {}) {
   const MASSIVE_BASE = (process.env.MASSIVE_BASE || 'https://api.massive.com').replace(/\/+$/, '');
   const DEFAULT_SYMS = 'SPY,QQQ,NVDA,AAPL,TSLA,MSFT,AMD,META,AMZN,GOOGL,NFLX,COIN';
   const quoteCache = new Map(); // symbolSet -> { at, body }
+  // Market Monitor tape: detections are computed ONLY from snapshots this
+  // server already fetched for /api/quotes clients — zero extra provider load.
+  const tape = options.tape || createTapeEngine();
   app.get('/api/quotes', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'no-store');
@@ -282,16 +287,26 @@ export function createLoopKickServer(options = {}) {
           pct: pct == null ? null : Math.round(pct * 100) / 100,
           vol: t.day?.v ?? null,
           pc: t.prevDay?.c ?? null,
+          hi: t.day?.h ?? null,
+          lo: t.day?.l ?? null,
           t: t.updated ? new Date(Math.floor(t.updated / 1e6)).toISOString().slice(11, 19) : null,
         };
       }
       const body = { ok: true, quotes };
       quoteCache.set(key, { at: now, body });
+      try { tape.ingest(quotes); } catch { /* the tape must never break quotes */ }
       return res.json(body);
     } catch {
       if (hit && now - hit.at < 60000) return res.json({ ...hit.body, stale: true });
       return res.json({ ok: false, reason: 'upstream-error', quotes: {} });
     }
+  });
+
+  // Market Monitor tape backfill: pure memory read, no upstream calls.
+  app.get('/api/tape', (_req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store');
+    try { return res.json(tape.snapshot()); } catch { return res.json({ ok: false, events: [], counts: { bull: 0, bear: 0 } }); }
   });
 
   // Company logo per ticker, via massive.com ticker branding. Image bytes are
