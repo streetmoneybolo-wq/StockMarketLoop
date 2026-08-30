@@ -232,76 +232,99 @@ export function createLoopKickServer(options = {}) {
   // Market Monitor tape: detections are computed ONLY from snapshots this
   // server already fetched for /api/quotes clients — zero extra provider load.
   const tape = options.tape || createTapeEngine();
+
+  // Build a quote set (10s cache), feed the tape, return the body. Throws on a
+  // stocks upstream error so callers can serve a stale copy. Shared by the
+  // /api/quotes route and the server-side tape-ingest loop.
+  async function fetchQuoteSet(syms) {
+    const key = syms.join(',');
+    const now = Date.now();
+    const hit = quoteCache.get(key);
+    if (hit && now - hit.at < 10000) return hit.body;
+    // BTC is crypto: it rides Kraken's public ticker (real, live, no key),
+    // never the stocks snapshot. Everything else stays on Massive.
+    const wantBtc = syms.includes('BTC');
+    const stockSyms = syms.filter((x) => x !== 'BTC');
+    const quotes = {};
+    let data = { tickers: [] };
+    if (stockSyms.length) {
+      const url = `${MASSIVE_BASE}/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(stockSyms.join(','))}&include_otc=true`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(6000) });
+      if (!r.ok) throw new Error(`massive ${r.status}`);
+      data = await r.json();
+    }
+    if (wantBtc) {
+      try {
+        const kr = await fetch('https://api.kraken.com/0/public/Ticker?pair=XBTUSD', { signal: AbortSignal.timeout(5000) });
+        const kj = await kr.json();
+        const tick = kj && kj.result && kj.result[Object.keys(kj.result)[0]];
+        const last = tick ? Number(tick.c?.[0]) : NaN;
+        const open = tick ? Number(tick.o) : NaN;
+        const vol24 = tick ? Number(tick.v?.[1]) : NaN;
+        if (Number.isFinite(last) && last > 0 && Number.isFinite(open) && open > 0) {
+          quotes.BTC = {
+            sym: 'BTC',
+            last: Math.round(last * 100) / 100,
+            chg: Math.round((last - open) * 100) / 100,
+            pct: Math.round(((last - open) / open) * 10000) / 100,
+            vol: Number.isFinite(vol24) ? Math.round(vol24 * last) : null, // 24h notional USD
+            pc: Math.round(open * 100) / 100, // today's UTC open — crypto has no close
+            t: new Date().toISOString().slice(11, 19),
+          };
+        }
+      } catch { /* BTC row degrades to em-dashes; stocks still serve */ }
+    }
+    for (const t of (data.tickers || [])) {
+      const last = t.lastTrade?.p ?? t.day?.c ?? t.prevDay?.c ?? null;
+      const chg = typeof t.todaysChange === 'number' ? t.todaysChange : null;
+      const pct = typeof t.todaysChangePerc === 'number' ? t.todaysChangePerc : null;
+      quotes[t.ticker] = {
+        sym: t.ticker,
+        last: last == null ? null : Math.round(last * 100) / 100,
+        chg: chg == null ? null : Math.round(chg * 100) / 100,
+        pct: pct == null ? null : Math.round(pct * 100) / 100,
+        vol: t.day?.v ?? null,
+        pc: t.prevDay?.c ?? null,
+        hi: t.day?.h ?? null,
+        lo: t.day?.l ?? null,
+        t: t.updated ? new Date(Math.floor(t.updated / 1e6)).toISOString().slice(11, 19) : null,
+      };
+    }
+    const body = { ok: true, quotes };
+    if (quoteCache.size > 300) quoteCache.delete(quoteCache.keys().next().value);
+    quoteCache.set(key, { at: now, body });
+    try { tape.ingest(quotes); } catch { /* the tape must never break quotes */ }
+    return body;
+  }
+
   app.get('/api/quotes', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'no-store');
     if (!MASSIVE_KEY) return res.json({ ok: false, reason: 'no-key', quotes: {} });
     const syms = String(req.query.symbols || DEFAULT_SYMS)
       .toUpperCase().replace(/[^A-Z0-9,.\-]/g, '').split(',').filter(Boolean).slice(0, 60);
-    const key = syms.join(',');
-    const now = Date.now();
-    const hit = quoteCache.get(key);
-    if (hit && now - hit.at < 10000) return res.json(hit.body);
     try {
-      // BTC is crypto: it rides Kraken's public ticker (real, live, no key),
-      // never the stocks snapshot. Everything else stays on Massive.
-      const wantBtc = syms.includes('BTC');
-      const stockSyms = syms.filter((x) => x !== 'BTC');
-      const quotes = {};
-      let data = { tickers: [] };
-      if (stockSyms.length) {
-        const url = `${MASSIVE_BASE}/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(stockSyms.join(','))}&include_otc=true`;
-        const r = await fetch(url, { headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(6000) });
-        if (!r.ok) throw new Error(`massive ${r.status}`);
-        data = await r.json();
-      }
-      if (wantBtc) {
-        try {
-          const kr = await fetch('https://api.kraken.com/0/public/Ticker?pair=XBTUSD', { signal: AbortSignal.timeout(5000) });
-          const kj = await kr.json();
-          const tick = kj && kj.result && kj.result[Object.keys(kj.result)[0]];
-          const last = tick ? Number(tick.c?.[0]) : NaN;
-          const open = tick ? Number(tick.o) : NaN;
-          const vol24 = tick ? Number(tick.v?.[1]) : NaN;
-          if (Number.isFinite(last) && last > 0 && Number.isFinite(open) && open > 0) {
-            quotes.BTC = {
-              sym: 'BTC',
-              last: Math.round(last * 100) / 100,
-              chg: Math.round((last - open) * 100) / 100,
-              pct: Math.round(((last - open) / open) * 10000) / 100,
-              vol: Number.isFinite(vol24) ? Math.round(vol24 * last) : null, // 24h notional USD
-              pc: Math.round(open * 100) / 100, // today's UTC open — crypto has no close
-              t: new Date().toISOString().slice(11, 19),
-            };
-          }
-        } catch { /* BTC row degrades to em-dashes; stocks still serve */ }
-      }
-      for (const t of (data.tickers || [])) {
-        const last = t.lastTrade?.p ?? t.day?.c ?? t.prevDay?.c ?? null;
-        const chg = typeof t.todaysChange === 'number' ? t.todaysChange : null;
-        const pct = typeof t.todaysChangePerc === 'number' ? t.todaysChangePerc : null;
-        quotes[t.ticker] = {
-          sym: t.ticker,
-          last: last == null ? null : Math.round(last * 100) / 100,
-          chg: chg == null ? null : Math.round(chg * 100) / 100,
-          pct: pct == null ? null : Math.round(pct * 100) / 100,
-          vol: t.day?.v ?? null,
-          pc: t.prevDay?.c ?? null,
-          hi: t.day?.h ?? null,
-          lo: t.day?.l ?? null,
-          t: t.updated ? new Date(Math.floor(t.updated / 1e6)).toISOString().slice(11, 19) : null,
-        };
-      }
-      const body = { ok: true, quotes };
-      if (quoteCache.size > 300) quoteCache.delete(quoteCache.keys().next().value);
-      quoteCache.set(key, { at: now, body });
-      try { tape.ingest(quotes); } catch { /* the tape must never break quotes */ }
-      return res.json(body);
+      return res.json(await fetchQuoteSet(syms));
     } catch {
-      if (hit && now - hit.at < 60000) return res.json({ ...hit.body, stale: true });
+      const hit = quoteCache.get(syms.join(','));
+      if (hit && Date.now() - hit.at < 60000) return res.json({ ...hit.body, stale: true });
       return res.json({ ok: false, reason: 'upstream-error', quotes: {} });
     }
   });
+
+  // Server-side Market Monitor ingest: keep the tape populated across a broad,
+  // market-wide universe continuously — independent of who is viewing. The
+  // stocks plan is unlimited, so one ~50-symbol snapshot every 45s (~1.3
+  // calls/min) is trivial. The tape engine gates stocks to market hours; BTC
+  // ingests around the clock. TAPE_SYMBOLS env overrides the default set.
+  const TAPE_UNIVERSE = String(process.env.TAPE_SYMBOLS ||
+    'SPY,QQQ,IWM,DIA,SOXX,BTC,NVDA,TSLA,AAPL,MSFT,AMD,META,AMZN,GOOGL,NFLX,AVGO,MU,SMCI,PLTR,COIN,MSTR,MARA,RIOT,SOFI,HOOD,NIO,F,BAC,INTC,CSCO,DIS,BABA,UBER,SHOP,SNAP,PYPL,ROKU,DKNG,PLUG,IONQ,RIVN,LCID,GME,AMC,TSM,ARM,DELL,CRWD,NET,SNOW')
+    .toUpperCase().replace(/[^A-Z0-9,.\-]/g, '').split(',').filter(Boolean).slice(0, 60);
+  let tapeIngestTimer = null;
+  if (MASSIVE_KEY && options.tapeIngest !== false) {
+    tapeIngestTimer = setInterval(() => { fetchQuoteSet(TAPE_UNIVERSE).catch(() => {}); }, 45000);
+    if (tapeIngestTimer.unref) tapeIngestTimer.unref();
+  }
 
   // Market Monitor tape backfill: pure memory read, no upstream calls.
   app.get('/api/tape', (_req, res) => {
@@ -448,6 +471,7 @@ export function createLoopKickServer(options = {}) {
   }
 
   async function close() {
+    if (tapeIngestTimer) { clearInterval(tapeIngestTimer); tapeIngestTimer = null; }
     if (server.listening) {
       await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
