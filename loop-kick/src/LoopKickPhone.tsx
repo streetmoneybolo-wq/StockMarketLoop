@@ -54,6 +54,21 @@ const NOTIF_TINTS = [
 ];
 const PEER_NAME = typeof window !== 'undefined' ? (window.LOOP_KICK_CONFIG?.peerName || 'Loop') : 'Loop';
 
+const CUSTOM_EMOJIS: Record<string, string> = {
+  free_green: '/emojis/free-green.png',
+  free_red: '/emojis/free-red.png',
+};
+
+function customEmojiText(text: string): React.ReactNode[] {
+  return String(text || '').split(/(:(?:free_green|free_red):)/g).map((part, index) => {
+    const match = /^:(free_green|free_red):$/.exec(part);
+    if (!match) return <React.Fragment key={`text-${index}`}>{part}</React.Fragment>;
+    return <img key={`emoji-${index}`} src={CUSTOM_EMOJIS[match[1]]} alt={part} title={part}
+      loading="lazy" decoding="async"
+      style={{ display: 'inline-block', width: '2em', height: '2em', margin: '-.35em .12em', objectFit: 'contain', verticalAlign: 'middle' }} />;
+  });
+}
+
 /* ---------------- types ---------------- */
 
 interface ThreadMsg { id: string; from: 'me' | 'them'; text: string; media?: { id: number; mime: string; url: string }[]; }
@@ -771,14 +786,14 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                 <div key={m.id || i} style={{ display: 'flex', justifyContent: 'flex-end', animation: 'msgIn .2s ease' }}>
                                   <div style={{ maxWidth: '80%', padding: '9px 13px', borderRadius: '17px 17px 5px 17px', fontSize: 12, lineHeight: 1.5, background: accentGrad, color: acc.fg, boxShadow: `0 6px 18px ${acc.c}3d, inset 0 1px 0 rgba(255,255,255,.35)` }}>
                                     {m.media?.map(media => media.mime.startsWith('image/') ? <img key={media.id} src={media.url} alt="Message attachment" style={{ display: 'block', width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 8, marginBottom: m.text ? 5 : 0 }} /> : <audio key={media.id} controls src={media.url} style={{ width: 190, maxWidth: '100%' }} />)}
-                                    {m.text}
+                                    {customEmojiText(m.text)}
                                   </div>
                                 </div>
                               ) : (
                                 <div key={m.id || i} style={{ display: 'flex', justifyContent: 'flex-start', animation: 'msgIn .2s ease' }}>
                                   <div style={{ maxWidth: '80%', padding: '9px 13px', borderRadius: '17px 17px 17px 5px', fontSize: 12, lineHeight: 1.5, background: 'rgba(22,30,41,.94)', color: '#dbe4ec', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.04), 0 4px 12px rgba(0,0,0,.4)' }}>
                                     {m.media?.map(media => media.mime.startsWith('image/') ? <img key={media.id} src={media.url} alt="Message attachment" style={{ display: 'block', width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 8, marginBottom: m.text ? 5 : 0 }} /> : <audio key={media.id} controls src={media.url} style={{ width: 190, maxWidth: '100%' }} />)}
-                                    {m.text}
+                                    {customEmojiText(m.text)}
                                   </div>
                                 </div>
                               ))}
@@ -799,7 +814,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                 const person = thread.people?.[0];
                                 return <button key={thread.id} onClick={() => void this.openThread(thread)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', border: 0, borderRadius: 11, background: thread.unread ? 'linear-gradient(160deg,#0b1620,#081018)' : '#070d13', color: '#e8edf2', padding: '8px 9px', cursor: 'pointer', textAlign: 'left' }}>
                                   {person?.avatar ? <img src={person.avatar} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} /> : <span style={{ width: 32, height: 32, borderRadius: '50%', display: 'grid', placeItems: 'center', background: '#17242a', color: acc.c }}>{(person?.name || thread.title || thread.type).slice(0, 1).toUpperCase()}</span>}
-                                  <span style={{ minWidth: 0, flex: 1 }}><strong style={{ display: 'block', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person?.name || thread.title || `${thread.type} thread`}</strong><small style={{ display: 'block', color: '#7e8a96', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{thread.last_message.preview || thread.category}</small></span>
+                                  <span style={{ minWidth: 0, flex: 1 }}><strong style={{ display: 'block', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person?.name || thread.title || `${thread.type} thread`}</strong><small style={{ display: 'block', color: '#7e8a96', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{thread.last_message.preview ? customEmojiText(thread.last_message.preview) : thread.category}</small></span>
                                   {thread.unread > 0 && <span style={{ minWidth: 17, height: 17, borderRadius: 10, display: 'grid', placeItems: 'center', background: '#ff3b5c', color: '#fff', fontSize: 8 }}>{thread.unread}</span>}
                                 </button>;
                               })}
