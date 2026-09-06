@@ -220,6 +220,15 @@ export function createLoopKickServer(options = {}) {
   app.post('/api/chirp/sessions/:id/signal', (req, res) => proxy(req, res, 'POST', `/sml-loop/v1/chirp/sessions/${Number(req.params.id)}/signal`, req.body));
   app.post('/api/chirp/sessions/:id/end', (req, res) => proxy(req, res, 'POST', `/sml-loop/v1/chirp/sessions/${Number(req.params.id)}/end`, req.body));
 
+  // ---- ticker voice rooms: the SAME per-ticker room the ticker terminal runs
+  //      (WordPress plugin sml-ticker-voice-room-v7; routes allow-listed in the bridge gateway) ----
+  app.get('/api/ticker-room', (req, res) => proxy(req, res, 'GET', '/sml-ticker-voice/v1/room', req.query));
+  app.post('/api/ticker-room/join', (req, res) => proxy(req, res, 'POST', '/sml-ticker-voice/v1/join', req.body));
+  app.post('/api/ticker-room/heartbeat', (req, res) => proxy(req, res, 'POST', '/sml-ticker-voice/v1/heartbeat', req.body));
+  app.post('/api/ticker-room/leave', (req, res) => proxy(req, res, 'POST', '/sml-ticker-voice/v1/leave', req.body));
+  app.get('/api/ticker-room/signals', (req, res) => proxy(req, res, 'GET', '/sml-ticker-voice/v1/signals', req.query));
+  app.post('/api/ticker-room/signals', (req, res) => proxy(req, res, 'POST', '/sml-ticker-voice/v1/signals', req.body));
+
   // ---- market data (read-only) ----
   // Live quotes from massive.com (Polygon-compatible snapshot). API key in the
   // MASSIVE_API_KEY env var (server-side only, never sent to the browser). ~10s

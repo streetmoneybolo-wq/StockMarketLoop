@@ -90,6 +90,13 @@ export interface Transport {
   chirpIncoming(): Promise<{ incoming: unknown[]; missed: unknown[] }>;
   iceConfig(): Promise<RTCConfiguration>;
   livekitToken(room: string): Promise<{ ok: boolean; token?: string; url?: string; room?: string; name?: string; reason?: string }>;
+  /* Ticker voice rooms (sml-ticker-voice/v1 on WordPress, via the Render proxy) */
+  tickerRoom(symbol: string): Promise<any>;
+  tickerRoomJoin(symbol: string, mode: 'speaker' | 'listener'): Promise<any>;
+  tickerRoomHeartbeat(symbol: string, mode: string, speaking: boolean, muted: boolean): Promise<any>;
+  tickerRoomLeave(symbol: string): Promise<any>;
+  tickerRoomSignals(symbol: string, after: number): Promise<{ signals: any[]; server_time: number }>;
+  tickerRoomSignal(symbol: string, toUserId: number, type: string, payload: any): Promise<any>;
   connect(onMessage: (m: WireMessage) => void, onRefresh?: () => void): void;
   disconnect(): void;
 }
@@ -135,6 +142,12 @@ function mockTransport(): Transport {
     chirpStart: async () => ({ id: 1, decision: 'live' }), chirpSignal: async () => ({}), chirpEnd: async () => ({}), chirpIncoming: async () => ({ incoming: [], missed: [] }),
     iceConfig: async () => ({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }),
     livekitToken: async () => ({ ok: false, reason: 'no-livekit' }),
+    tickerRoom: async (symbol) => ({ symbol, title: `${symbol} Live Voice Room`, count: 0, members: [], current_user_id: 1 }),
+    tickerRoomJoin: async (symbol) => ({ symbol, count: 1, members: [{ id: 1, name: 'You', handle: 'you', profile_url: '', avatar_url: '', mode: 'listener', speaking: false, muted: true, last_seen: 0 }], current_user_id: 1 }),
+    tickerRoomHeartbeat: async (symbol) => ({ symbol, count: 1, members: [], current_user_id: 1 }),
+    tickerRoomLeave: async (symbol) => ({ symbol, count: 0, members: [] }),
+    tickerRoomSignals: async () => ({ signals: [], server_time: Date.now() }),
+    tickerRoomSignal: async () => ({ ok: true }),
     connect: cb => { callback = cb; void callback; }, disconnect: () => { callback = null; },
   };
 }
@@ -156,7 +169,7 @@ function liveTransport(cfg: LoopKickConfig): Transport {
   async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const response = await fetch(path, { ...options, headers: { ...headers(!!options.body && !(options.body instanceof FormData)), ...(options.headers || {}) } });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok || body?.error) throw new Error(body?.error || body?.message || `Messenger returned ${response.status}`);
+    if (!response.ok || body?.error) { const err = new Error(body?.error || body?.message || `Messenger returned ${response.status}`) as Error & { status?: number }; err.status = response.status; throw err; }
     return body as T;
   }
 
@@ -227,6 +240,12 @@ function liveTransport(cfg: LoopKickConfig): Transport {
     chirpIncoming: () => request('/api/chirp/incoming'),
     iceConfig: () => request('/api/ice'),
     livekitToken: (room) => request('/api/livekit-token', { method: 'POST', body: JSON.stringify({ room }) }),
+    tickerRoom: symbol => request(`/api/ticker-room?symbol=${encodeURIComponent(symbol)}`),
+    tickerRoomJoin: (symbol, mode) => request('/api/ticker-room/join', { method: 'POST', body: JSON.stringify({ symbol, mode }) }),
+    tickerRoomHeartbeat: (symbol, mode, speaking, muted) => request('/api/ticker-room/heartbeat', { method: 'POST', body: JSON.stringify({ symbol, mode, speaking, muted }) }),
+    tickerRoomLeave: symbol => request('/api/ticker-room/leave', { method: 'POST', body: JSON.stringify({ symbol }) }),
+    tickerRoomSignals: (symbol, after) => request(`/api/ticker-room/signals?symbol=${encodeURIComponent(symbol)}&after=${Number(after) || 0}`),
+    tickerRoomSignal: (symbol, toUserId, type, payload) => request('/api/ticker-room/signals', { method: 'POST', body: JSON.stringify({ symbol, to_user_id: toUserId, type, payload }) }),
     connect: (messageCb, refreshCb) => { onMessage = messageCb; onRefresh = refreshCb || null; stopped = false; void poll(); },
     disconnect: () => { stopped = true; if (timer) clearTimeout(timer); timer = null; onMessage = null; onRefresh = null; },
   };

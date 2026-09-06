@@ -10,7 +10,7 @@ import React from 'react';
 import { BootstrapData, createTransport, fetchWatch, Person, SiteNotification, ThreadSummary, Transport, WatchData, WireMessage } from './transport';
 import { LiveChirpClient } from './liveChirp';
 import { CallClient, offerIsCall } from './call';
-import { RoomClient } from './room';
+import { TickerRoomClient, RoomInfo, TickerRoomPhase } from './tickerRoom';
 
 /* ---------------- static data from the design ---------------- */
 
@@ -61,6 +61,7 @@ function stripLead(message: string, leads: Array<string | undefined>): string {
   }
   return m;
 }
+const WM_LOGO = '/loop-mark.png';   // the Stock Market Loop mark — the screens' watermark (owner call 2026-09-06)
 const PEER_NAME = typeof window !== 'undefined' ? (window.LOOP_KICK_CONFIG?.peerName || 'Loop') : 'Loop';
 
 const CUSTOM_EMOJIS: Record<string, string> = {
@@ -125,9 +126,8 @@ interface State {
   callPeerName: string;
   callError: string;
   incoming: { id: number; peerId: number; peerName: string; video: boolean } | null;
-  roomPhase: 'idle' | 'connecting' | 'connected' | 'error';
-  roomError: string;
-  roomPeers: number;
+  tr: { phase: TickerRoomPhase; symbol: string; room: RoomInfo | null; error: string; mode: 'speaker' | 'listener'; muted: boolean; speaking: boolean; level: number };
+  trInput: string;
   watchData: WatchData | null;
   watchSel: number; // -1 = live stream, otherwise index into watchData.videos
 }
@@ -147,7 +147,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     topBgKey: 'carbon',
     deckBgKey: 'carbon',
     wmOn: true,
-    wmText: 'LOOP',
+    wmText: '',
     draft: '',
     playing: true,
     watchSec: 47,
@@ -189,9 +189,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     callPeerName: '',
     callError: '',
     incoming: null,
-    roomPhase: 'idle',
-    roomError: '',
-    roomPeers: 0,
+    tr: { phase: 'idle', symbol: '', room: null, error: '', mode: 'listener', muted: true, speaking: false, level: 0 },
+    trInput: '',
   };
 
   private transport: Transport = createTransport();
@@ -209,9 +208,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   private _remoteStream: MediaStream | null = null;
   private _localEl: HTMLVideoElement | null = null;
   private _remoteEl: HTMLVideoElement | null = null;
-  private roomClient = new RoomClient(this.transport, {
-    onPhase: (roomPhase, meta) => this.setState({ roomPhase, roomError: meta.error || '', roomPeers: meta.count || 0 }),
-  });
+  private tickerRoom = new TickerRoomClient(this.transport, { onUpdate: tr => this.setState({ tr }) }, 0);
   private _callEndTimer: ReturnType<typeof setTimeout> | null = null;
   private _handledIncoming = new Set<number>();
   private _wantScroll = false;
@@ -297,7 +294,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       // re-report the surface so the bridge resizes the iframe and nothing clips.
       || previousState.mode !== this.state.mode
       || previousState.callPhase !== this.state.callPhase
-      || previousState.roomPhase !== this.state.roomPhase
+      || previousState.tr.phase !== this.state.tr.phase
+      || (previousState.tr.room ? previousState.tr.room.count : -1) !== (this.state.tr.room ? this.state.tr.room.count : -1)
     ) {
       this.scheduleEmbedSurface();
     }
@@ -367,7 +365,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (this._callEndTimer) clearTimeout(this._callEndTimer);
     void this.chirp.close(true);
     void this.call.hangup(true);
-    void this.roomClient.leave();
+    void this.tickerRoom.leave();
     this.transport.disconnect();
   }
 
@@ -438,23 +436,19 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   private toggleMute = () => { const m = !this.state.muted; this.call.setMuted(m); this.setState({ muted: m }); };
   private toggleCam = () => { const off = !this.state.camOff; this.call.setCameraOff(off); this.setState({ camOff: off }); };
 
-  /* ---------------- group video rooms (LiveKit) ---------------- */
+  /* ---------------- ticker voice rooms — the terminal's live voice chart rooms, from the phone ---------------- */
 
-  // Room = the active conversation (so a group thread's members meet), else a shared lobby.
-  private enterRoom = () => {
-    this.setState({ mode: 'room', muted: false, camOff: false });
-    if (this.roomClient.active) return;
-    const t = this.state.threads.find(x => x.id === this.state.activeThreadId);
-    void this.roomClient.join(t ? `thread-${t.id}` : 'loop-lobby');
+  private enterRoom = () => { this.setState({ mode: 'room' }); };
+  private roomLook = (sym?: string) => {
+    const s = String(sym ?? this.state.trInput).toUpperCase().replace(/[^A-Z0-9.-]/g, '').slice(0, 12);
+    if (!s) return;
+    this.setState({ trInput: s });
+    void this.tickerRoom.look(s);
   };
-
-  private leaveRoom = () => {
-    void this.roomClient.leave();
-    this.setState(p => ({ mode: p.mode === 'room' ? 'compose' : p.mode }));
-  };
-
-  private roomMute = () => { const m = !this.state.muted; this.roomClient.setMuted(m); this.setState({ muted: m }); };
-  private roomCam = () => { const off = !this.state.camOff; this.roomClient.setCameraOff(off); this.setState({ camOff: off }); };
+  private roomJoin = (mode: 'speaker' | 'listener') => { void this.tickerRoom.join(mode); };
+  private leaveRoom = () => { void this.tickerRoom.leave(); };
+  private roomMute = () => { this.tickerRoom.setMuted(!this.state.tr.muted); };
+  private roomOpenTerminal = () => { const s = this.state.tr.symbol; if (s) window.open(`https://stockmarketloop.com/tradingfloor/${encodeURIComponent(s.toLowerCase())}/`, '_blank', 'noopener'); };
 
   /* ---------------- message system wiring ---------------- */
 
@@ -684,8 +678,9 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     const mono = 'ui-monospace,Menlo,monospace';
 
     const wm = (size: number, ls: number) => (
-      <div style={{ position: 'absolute', inset: 0, display: s.wmOn && s.wmText ? 'flex' : 'none', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 5 }}>
-        <span style={{ fontFamily: "'Archivo',sans-serif", fontWeight: 800, fontSize: size, letterSpacing: ls, color: 'rgba(255,255,255,.05)', transform: 'rotate(-16deg)', whiteSpace: 'nowrap' }}>{s.wmText}</span>
+      <div style={{ position: 'absolute', inset: 0, display: s.wmOn ? 'flex' : 'none', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, pointerEvents: 'none', zIndex: 5 }}>
+        <img src={WM_LOGO} alt="" draggable={false} style={{ width: Math.round(size * 5.2), maxWidth: '78%', opacity: .1, transform: 'rotate(-12deg)' }} />
+        {s.wmText && <span style={{ fontFamily: "'Archivo',sans-serif", fontWeight: 800, fontSize: Math.round(size * .55), letterSpacing: ls, color: 'rgba(255,255,255,.06)', transform: 'rotate(-12deg)', whiteSpace: 'nowrap' }}>{s.wmText}</span>}
       </div>
     );
 
@@ -937,7 +932,6 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           <button key={mo.key}
                             onClick={() => {
                               this.scrollBottom();
-                              if (s.mode === 'room' && mo.key !== 'room' && this.roomClient.active) void this.roomClient.leave();
                               if (mo.key === 'room') { this.enterRoom(); return; }
                               if (mo.key === 'video' || mo.key === 'voice') {
                                 // Show the pre-call screen — do NOT auto-dial. The user taps Call.
@@ -972,36 +966,56 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                       </div>
                     )}
 
-                    {/* group video room — LiveKit SFU */}
-                    {s.mode === 'room' && (
-                      <div style={{ borderRadius: 13, background: '#05090d', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.5)', overflow: 'hidden' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 11px', borderBottom: '1px solid #0f1720' }}>
-                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.roomPhase === 'connected' ? acc.c : '#5c6771', boxShadow: s.roomPhase === 'connected' ? `0 0 6px ${acc.c}` : 'none' }} />
-                          <span style={{ fontSize: 11, fontWeight: 600, color: '#e8edf2' }}>Group Room</span>
-                          <span style={{ fontFamily: mono, fontSize: 9, color: '#5c6771', marginLeft: 'auto' }}>{s.roomPhase === 'connected' ? `${s.roomPeers} in room` : s.roomPhase === 'connecting' ? 'connecting…' : ''}</span>
-                        </div>
-                        <div style={{ position: 'relative', minHeight: 150 }}>
-                          <div ref={el => this.roomClient.setContainer(el)}
-                            style={{ display: 'grid', gap: 6, padding: 8, gridTemplateColumns: '1fr' }} />
-                          {s.roomPhase !== 'connected' && (
-                            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 14, textAlign: 'center' }}>
-                              <div style={{ fontSize: 12, fontWeight: 600, color: '#e8edf2' }}>{s.roomPhase === 'error' ? 'Room unavailable' : s.roomPhase === 'connecting' ? 'Joining room…' : 'Group video room'}</div>
-                              <div style={{ fontSize: 10.5, color: s.roomError ? '#ff5c7a' : '#7e8a96', maxWidth: 230, lineHeight: 1.5 }}>{s.roomError || (s.roomPhase === 'connecting' ? 'Turning on your camera and mic…' : 'Everyone in this chat can join a live video room.')}</div>
-                              {(s.roomPhase === 'idle' || s.roomPhase === 'error') && (
-                                <button onClick={this.enterRoom} style={{ padding: '9px 22px', borderRadius: 999, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: acc.c, color: acc.fg }}>Join room</button>
-                              )}
+                    {/* ticker voice room — the terminal's live voice chart room, joined from the phone */}
+                    {s.mode === 'room' && (() => {
+                      const tr = s.tr; const room = tr.room; const members = room ? (room.members || []) : [];
+                      const joined = tr.phase === 'joined';
+                      const btn = (label: string, bg: string, fg: string, onClick: () => void, disabled = false) => (
+                        <button key={label} onClick={onClick} disabled={disabled} style={{ padding: '8px 12px', borderRadius: 999, border: bg === 'transparent' ? '1px solid #1e2831' : 'none', cursor: disabled ? 'default' : 'pointer', fontSize: 11, fontWeight: 700, background: bg, color: fg, opacity: disabled ? .55 : 1 }}>{label}</button>
+                      );
+                      return (
+                        <div style={{ borderRadius: 13, background: '#05090d', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.5)', overflow: 'hidden' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 11px', borderBottom: '1px solid #0f1720' }}>
+                            <span style={{ width: 7, height: 7, borderRadius: '50%', background: joined ? acc.c : '#5c6771', boxShadow: joined ? `0 0 6px ${acc.c}` : 'none' }} />
+                            <span style={{ fontSize: 11, fontWeight: 600, color: '#e8edf2' }}>{tr.symbol ? `$${tr.symbol} Live Voice Room` : 'Ticker Voice Rooms'}</span>
+                            <span style={{ fontFamily: mono, fontSize: 9, color: room && room.count ? acc.c : '#5c6771', marginLeft: 'auto' }}>{room ? `${room.count} live` : ''}</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6, padding: '8px 10px 4px' }}>
+                            <input value={s.trInput} onChange={e => this.setState({ trInput: e.target.value.toUpperCase() })} onKeyDown={e => { if (e.key === 'Enter') this.roomLook(); }} placeholder="Type a ticker, e.g. SPY" maxLength={12}
+                              style={{ flex: 1, minWidth: 0, background: '#0a1117', border: '1px solid #1e2831', borderRadius: 9, padding: '8px 10px', color: '#e8edf2', fontSize: 12, outline: 'none', fontFamily: mono, letterSpacing: 1 }} />
+                            {btn(tr.phase === 'looking' && !room ? '…' : 'Look', '#131d26', '#e8edf2', () => this.roomLook())}
+                          </div>
+                          <div style={{ padding: '4px 10px 8px', minHeight: 96 }}>
+                            {!tr.symbol && <div style={{ fontSize: 10.5, color: '#7e8a96', lineHeight: 1.5, padding: '10px 2px' }}>Every ticker terminal has a live voice chart room. Type a ticker to see who is in it before you join.</div>}
+                            {tr.error && <div style={{ fontSize: 10.5, color: '#ff5c7a', padding: '4px 2px' }}>{tr.error}</div>}
+                            {tr.symbol && room && !members.length && <div style={{ fontSize: 10.5, color: '#7e8a96', padding: '8px 2px' }}>No traders in ${tr.symbol} right now. Be the first.</div>}
+                            {members.slice(0, 12).map(m => (
+                              <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 2px' }}>
+                                <img src={m.avatar_url} alt="" width={26} height={26} style={{ width: 26, height: 26, borderRadius: '50%', objectFit: 'cover', flex: 'none', background: '#131d26', boxShadow: m.speaking ? `0 0 0 2px ${acc.c}` : 'none' }} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 11.5, fontWeight: 600, color: '#e8edf2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}{room && m.id === room.current_user_id ? ' (you)' : ''}</div>
+                                  <div style={{ fontSize: 9.5, color: '#7e8a96' }}>{m.mode === 'speaker' ? (m.muted ? 'Muted speaker' : 'Speaker') : 'Listening'}</div>
+                                </div>
+                                <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.speaking ? acc.c : '#2a343d', boxShadow: m.speaking ? `0 0 8px ${acc.c}` : 'none', flex: 'none' }} />
+                              </div>
+                            ))}
+                          </div>
+                          <div ref={el => this.tickerRoom.setAudioHost(el)} style={{ display: 'none' }} />
+                          {tr.symbol && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 8, padding: '4px 10px 11px' }}>
+                              {!joined && btn(tr.phase === 'joining' ? 'Joining…' : 'Join with mic', acc.c, acc.fg, () => this.roomJoin('speaker'), tr.phase === 'joining')}
+                              {!joined && btn('Listen', '#131d26', '#e8edf2', () => this.roomJoin('listener'), tr.phase === 'joining')}
+                              {joined && tr.mode === 'speaker' && btn(tr.muted ? 'Unmute' : 'Mute', tr.muted ? '#ff5c7a' : '#131d26', tr.muted ? '#fff' : '#e8edf2', this.roomMute)}
+                              {joined && btn('Leave', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.leaveRoom)}
+                              {btn('Open terminal ↗', 'transparent', '#7e8a96', this.roomOpenTerminal)}
                             </div>
                           )}
+                          {joined && tr.mode === 'speaker' && (
+                            <div style={{ height: 3, margin: '0 10px 10px', borderRadius: 2, background: '#0f1720' }}><div style={{ height: '100%', width: `${tr.level}%`, borderRadius: 2, background: acc.c, transition: 'width .08s' }} /></div>
+                          )}
                         </div>
-                        {s.roomPhase === 'connected' && (
-                          <div style={{ display: 'flex', justifyContent: 'center', gap: 10, padding: '9px 0 11px' }}>
-                            {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', this.roomMute)}
-                            {callBtn('V', s.camOff ? '#ff5c7a' : '#131d26', s.camOff ? '#fff' : '#98a3ad', this.roomCam)}
-                            {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.leaveRoom, true)}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* watch */}
                     {s.mode === 'watch' && (() => {
