@@ -52,6 +52,10 @@ export interface SiteNotification {
   read: boolean;
   category: 'priority' | 'general';
   source: string;
+  /** the member behind the notification (added by sml-notify on the WP side) */
+  actor?: { id: number; name: string; handle?: string; avatar?: string; url?: string } | null;
+  /** follow notifications: true while the viewer does not follow the actor back */
+  canFollowBack?: boolean;
 }
 
 export interface BootstrapData {
@@ -76,7 +80,7 @@ export interface Transport {
   respondRequest(threadId: number, action: 'accept' | 'decline'): Promise<ThreadSummary>;
   clearHistory(threadId: number): Promise<Record<string, unknown>>;
   search(query: string): Promise<Person[]>;
-  updateNotification(input: { action: string; id?: string; category?: string }): Promise<{ items: SiteNotification[] }>;
+  updateNotification(input: { action: string; id?: string; category?: string; actor_id?: number }): Promise<{ items: SiteNotification[] }>;
   savePreferences(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   saveChirpSettings(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   upload(file: File, purpose?: 'image' | 'voice'): Promise<{ id: number; url: string; mime: string }>;

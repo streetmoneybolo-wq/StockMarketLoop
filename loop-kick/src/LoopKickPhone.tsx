@@ -72,7 +72,7 @@ function customEmojiText(text: string): React.ReactNode[] {
 /* ---------------- types ---------------- */
 
 interface ThreadMsg { id: string; from: 'me' | 'them'; text: string; media?: { id: number; mime: string; url: string }[]; }
-interface Notif { id: string; title: string; text: string; time: string; tint: string; unread: boolean; link?: string; category?: string; }
+interface Notif { id: string; title: string; text: string; time: string; tint: string; unread: boolean; link?: string; category?: string; type?: string; actor?: SiteNotification['actor']; canFollowBack?: boolean; following?: boolean; }
 interface RoomMsg { user: string; color: string; text: string; }
 
 interface State {
@@ -458,8 +458,12 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   private notification = (item: SiteNotification, index: number): Notif => ({
     id: item.id,
-    title: item.category === 'priority' ? 'Priority alert' : (item.source === 'loop_bucks' ? 'Loop Bucks' : 'StockMarketLoop'),
-    text: item.message,
+    /* the OTHER member leads the alert: their name is the title, their avatar the tile */
+    title: item.category === 'priority' ? 'Priority alert' : (item.actor?.name || (item.source === 'loop_bucks' ? 'Loop Bucks' : 'StockMarketLoop')),
+    text: item.actor?.name && item.message.toLowerCase().startsWith(item.actor.name.toLowerCase()) ? item.message.slice(item.actor.name.length).replace(/^[\s:,-]+/, '') : item.message,
+    type: item.type,
+    actor: item.actor || null,
+    canFollowBack: item.canFollowBack,
     time: item.date ? new Date(item.date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '',
     tint: item.category === 'priority' ? NOTIF_TINTS[2] : NOTIF_TINTS[index % NOTIF_TINTS.length],
     unread: !item.read,
@@ -541,7 +545,21 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (!item.id.startsWith('demo-')) {
       try { await this.transport.updateNotification({ action: 'read', id: item.id }); } catch { /* optimistic read can retry later */ }
     }
+    /* a message alert opens the conversation right here, in the device */
+    if (item.type === 'dm') {
+      this.setState({ tab: 'messages' });
+      if (item.actor?.id) { try { const thread = await this.transport.openThread(item.actor.id); if (thread?.id) await this.openThread(thread); } catch { /* the messages tab is already showing */ } }
+      return;
+    }
     if (item.link) window.open(item.link, '_top');
+  };
+
+  /* Follow back from a follow alert (server side: sml-notify handles action=follow_back on the hub route). */
+  private followBack = async (item: Notif) => {
+    if (!item.actor?.id) return;
+    this.setState(p => ({ notifs: p.notifs.map(n => n.id === item.id ? { ...n, canFollowBack: false, following: true } : n) }));
+    try { await this.transport.updateNotification({ action: 'follow_back', id: item.id, actor_id: item.actor.id }); }
+    catch { this.setState(p => ({ notifs: p.notifs.map(n => n.id === item.id ? { ...n, canFollowBack: true, following: false } : n) })); }
   };
 
   private toggleFlag = async (flag: 'muted' | 'archived' | 'pinned') => {
@@ -854,12 +872,23 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           {s.notifs.map((n, i) => (
                             <div key={n.id || i} onClick={() => void this.markNotification(n)}
                               style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '10px 12px', borderRadius: 13, cursor: 'pointer', background: n.unread ? 'linear-gradient(160deg,#0b1620 0%,#081018 100%)' : '#070d13', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.04)' }}>
-                              <div style={{ width: 26, height: 26, borderRadius: 8, flex: 'none', background: n.tint, boxShadow: 'inset 0 1px 0 rgba(255,255,255,.25)' }} />
-                              <div style={{ minWidth: 0 }}>
-                                <div style={{ fontSize: 11.5, fontWeight: 600, color: '#e8edf2', marginBottom: 2 }}>{n.title}</div>
+                              {n.actor?.avatar
+                                ? <img src={n.actor.avatar} alt="" referrerPolicy="no-referrer" style={{ width: 26, height: 26, borderRadius: '50%', flex: 'none', objectFit: 'cover', boxShadow: '0 0 0 1.5px rgba(93,185,255,.7)' }} />
+                                : <div style={{ width: 26, height: 26, borderRadius: 8, flex: 'none', background: n.tint, boxShadow: 'inset 0 1px 0 rgba(255,255,255,.25)' }} />}
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ fontSize: 11.5, fontWeight: 600, color: n.actor ? '#5db9ff' : '#e8edf2', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.title}</div>
                                 <div style={{ fontSize: 11, color: '#7e8a96', lineHeight: 1.45 }}>{n.text}</div>
+                                {(n.link || n.type === 'dm') && <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, marginTop: 4 }}>{n.type === 'dm' ? 'OPEN MESSAGE →' : n.type === 'live' ? 'WATCH LIVE →' : n.type === 'video' ? 'WATCH →' : n.type === 'follow' ? 'VIEW PROFILE →' : 'VIEW POST →'}</div>}
                               </div>
-                              <div style={{ fontFamily: mono, fontSize: 8.5, color: '#4a545e', marginLeft: 'auto', flex: 'none' }}>{n.time}</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginLeft: 'auto', flex: 'none' }}>
+                                <div style={{ fontFamily: mono, fontSize: 8.5, color: '#4a545e' }}>{n.time}</div>
+                                {n.type === 'follow' && n.actor?.id && (n.canFollowBack || n.following) && (
+                                  <button type="button" disabled={!n.canFollowBack} onClick={e => { e.stopPropagation(); void this.followBack(n); }}
+                                    style={{ border: 0, borderRadius: 999, padding: '5px 9px', fontSize: 9, fontWeight: 700, cursor: n.canFollowBack ? 'pointer' : 'default', background: n.canFollowBack ? acc.c : '#131c26', color: n.canFollowBack ? acc.fg : '#7e8a96' }}>
+                                    {n.canFollowBack ? 'Follow back' : 'Following'}
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           ))}
                           {!s.notifs.length && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 14 }}>No site alerts. You’re all caught up.</div>}
