@@ -536,8 +536,14 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   private _onParentMessage = (event: MessageEvent) => {
     if (event.source !== window.parent) return;
     const type = event.data && (event.data as { type?: string }).type;
-    if (type === 'sml-loop-kick:open') this.goLive();
-    else if (type === 'sml-loop-kick:close') this.pauseLive();
+    if (type === 'sml-loop-kick:open') {
+      this.goLive();
+      // The prewarmed frame reported its phone-shaped mask while the popup was hidden (0×0),
+      // which the bridge rightly ignored. Report again now that we are visible, and once more
+      // after the layout has settled, so the bridge can mask everything outside the phone.
+      this.scheduleEmbedSurface();
+      [350, 1200].forEach(ms => this._surfaceTimers.push(setTimeout(this.publishEmbedSurface, ms)));
+    } else if (type === 'sml-loop-kick:close') this.pauseLive();
   };
 
   private hydrate = async () => {

@@ -6,6 +6,10 @@ html, body { margin: 0; padding: 0; background: #07090b; }
 .loop-kick-embed,
 .loop-kick-embed body,
 .loop-kick-embed #root { background: transparent !important; }
+/* Chromium paints an embedded document OPAQUE (white on light pages) when its color-scheme
+   differs from the iframe element's. The bridge sets the frame to `color-scheme: dark`; match it
+   here so the floating phone never gets a white/dark box behind it (owner report 2026-09-06). */
+.loop-kick-embed { color-scheme: dark; }
 * { box-sizing: border-box; }
 a { color: #00ff88; text-decoration: none; }
 a:hover { color: #7dffc4; }
