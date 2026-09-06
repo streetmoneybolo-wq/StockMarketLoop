@@ -178,6 +178,17 @@ export function createLoopKickServer(options = {}) {
     const auth = await requireAuth(req, res);
     if (!auth) return;
     try {
+      // One WordPress request (bridge >= 1.6.0 serves /sml-loop-kick/v1/bootstrap); older bridges
+      // deny the route, in which case we fan out as before.
+      try {
+        const bundle = await gateway(auth.token, 'GET', '/sml-loop-kick/v1/bootstrap');
+        if (bundle && bundle.threads && bundle.people) {
+          res.set('Cache-Control', 'no-store, private');
+          return res.json({ identity: auth.identity, ...bundle });
+        }
+      } catch (bundleError) {
+        if (bundleError?.code !== 'sml_lk_route_denied' && bundleError?.code !== 'rest_no_route') throw bundleError;
+      }
       const [threads, people, notifications, preferences, chirp, incoming] = await Promise.all([
         gateway(auth.token, 'GET', '/sml-loop/v1/threads', { per_page: 100 }),
         gateway(auth.token, 'GET', '/sml-mhub/v1/people'),

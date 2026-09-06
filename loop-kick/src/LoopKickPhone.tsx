@@ -61,7 +61,29 @@ function stripLead(message: string, leads: Array<string | undefined>): string {
   }
   return m;
 }
-const WM_LOGO = '/loop-mark.png';   // the Stock Market Loop mark — the screens' watermark (owner call 2026-09-06)
+const WM_LOGO = '/loop-mark.png';
+/* Fast open (owner call 2026-09-06). The bridge warms this frame with ?prewarm=1 before the
+   member clicks: we load the shell and paint the last bootstrap snapshot, but touch WordPress
+   only once the parent says the popup opened; closing it pauses polling. */
+const PREWARM = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('prewarm') === '1';
+function snapKey() {
+  const tok = String((typeof window !== 'undefined' && window.LOOP_KICK_CONFIG?.sessionToken) || '');
+  let h = 5381; for (let i = 0; i < tok.length; i++) h = ((h << 5) + h + tok.charCodeAt(i)) | 0;
+  return 'lk:boot:' + (h >>> 0).toString(36);
+}
+function readSnapshot(): BootstrapData | null {
+  try {
+    const raw = localStorage.getItem(snapKey()); if (!raw) return null;
+    const snap = JSON.parse(raw); if (!snap || !snap.at || Date.now() - snap.at > 86400000 || !snap.data) return null;
+    return { identity: { userId: '', wpUserId: 0 }, incoming: { incoming: [], missed: [] }, ...snap.data } as BootstrapData;
+  } catch { return null; }
+}
+function writeSnapshot(data: BootstrapData) {
+  try {
+    const { threads, people, notifications, preferences, chirp } = data;
+    localStorage.setItem(snapKey(), JSON.stringify({ at: Date.now(), data: { threads, people, notifications, preferences, chirp } }));
+  } catch { /* storage unavailable: nothing to cache */ }
+}   // the Stock Market Loop mark — the screens' watermark (owner call 2026-09-06)
 const PEER_NAME = typeof window !== 'undefined' ? (window.LOOP_KICK_CONFIG?.peerName || 'Loop') : 'Loop';
 
 const CUSTOM_EMOJIS: Record<string, string> = {
@@ -318,8 +340,11 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     this.scheduleEmbedSurface();
 
     /* ---- the existing StockMarketLoop messenger is the source of truth ---- */
-    void this.hydrate().finally(() => this.transport.connect(this.onIncoming, () => void this.refreshSummary()));
-    this._chirpTimer = setInterval(() => {
+    window.addEventListener('message', this._onParentMessage);
+    const snap = readSnapshot();
+    if (snap) { this._hasSnapshot = true; this.applyBootstrap(snap, false); }
+    if (!PREWARM) this.goLive();
+    this._chirpTick = () => {
       this.transport.chirpIncoming().then(data => {
         const incoming = (data.incoming || [])[0] as { id?: number; peer_id?: number; peer_name?: string; offer?: unknown } | undefined;
         if (!incoming?.id) return;
@@ -337,7 +362,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
           void this.chirp.acceptIncoming(incoming); // sendonly audio -> push-to-talk chirp (unchanged)
         }
       }).catch(() => {});
-    }, 2800);
+    };
 
     /* ---- design's ambient simulations (watch/call/room) ---- */
     this._interval = setInterval(() => {
@@ -357,6 +382,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   componentWillUnmount() {
     window.removeEventListener('keydown', this._key);
     window.removeEventListener('resize', this._resize);
+    window.removeEventListener('message', this._onParentMessage);
     if (this._interval) clearInterval(this._interval);
     if (this._searchTimer) clearTimeout(this._searchTimer);
     if (this._chirpTimer) clearInterval(this._chirpTimer);
@@ -488,10 +514,34 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     });
     const incoming = (data.incoming?.incoming || [])[0];
     if (incoming) void this.chirp.acceptIncoming(incoming);
+    if (data.identity && data.identity.wpUserId) writeSnapshot(data);
+  };
+
+  private _live = false;
+  private _hasSnapshot = false;
+  private _chirpTick: (() => void) | null = null;
+  private goLive = () => {
+    if (this._live) return;
+    this._live = true;
+    const first = this.state.threads.length ? this.refreshSummary() : this.hydrate();
+    void first.finally(() => { if (this._live) this.transport.connect(this.onIncoming, () => void this.refreshSummary()); });
+    if (this._chirpTick && !this._chirpTimer) this._chirpTimer = setInterval(this._chirpTick, 2800);
+  };
+  private pauseLive = () => {
+    if (!this._live) return;
+    this._live = false;
+    this.transport.disconnect();
+    if (this._chirpTimer) { clearInterval(this._chirpTimer); this._chirpTimer = null; }
+  };
+  private _onParentMessage = (event: MessageEvent) => {
+    if (event.source !== window.parent) return;
+    const type = event.data && (event.data as { type?: string }).type;
+    if (type === 'sml-loop-kick:open') this.goLive();
+    else if (type === 'sml-loop-kick:close') this.pauseLive();
   };
 
   private hydrate = async () => {
-    this.setState({ loading: true, sendError: '' });
+    this.setState({ loading: !this._hasSnapshot, sendError: '' });
     try { this.applyBootstrap(await this.transport.bootstrap(), false); }
     catch (error) { this.setState({ loading: false, sendError: (error as Error).message }); }
   };
