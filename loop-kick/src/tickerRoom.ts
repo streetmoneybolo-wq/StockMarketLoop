@@ -86,10 +86,18 @@ export class TickerRoomClient {
     if (this.lookTimer) clearTimeout(this.lookTimer);
     this.lookTimer = setTimeout(() => { void this.refresh().then(() => this.scheduleLook()); }, this.joined ? 3500 : 12000);
   }
+  /* The room payload carries current_user_id: that is how we know which member is us. Without it
+     (selfId 0) we treated ourselves as a peer and offered calls to our own id — every signal came
+     back 400 and no real peer ever connected (owner report 2026-09-06). */
+  private learnSelf(room: RoomInfo | null) {
+    const id = Number(room && room.current_user_id || 0);
+    if (id > 0 && id !== this.selfId) this.selfId = id;
+  }
   private async refresh() {
     if (!this.symbol) return;
     try {
       const room = await this.t.tickerRoom(this.symbol);
+      this.learnSelf(room);
       this.set({ room, error: '' , phase: this.joined ? 'joined' : (this.phase === 'joining' ? 'joining' : 'looking') });
       if (this.joined) await this.syncPeers(room.members || []);
     } catch (e) {
@@ -113,6 +121,7 @@ export class TickerRoomClient {
       } else { this.stream = null; this.muted = true; }
       this.mode = mode;
       const room = await this.t.tickerRoomJoin(this.symbol, mode);
+      this.learnSelf(room);
       this.set({ phase: 'joined', room });
       await this.syncPeers(room.members || []);
       this.pollSignals();
@@ -210,7 +219,7 @@ export class TickerRoomClient {
     for (const c of q) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
   }
   private async syncPeers(members: RoomMember[]) {
-    if (!this.joined) return;
+    if (!this.joined || !this.selfId) return;   /* never mesh until we know who we are */
     const ids = (members || []).map(m => Number(m.id || 0)).filter(id => id && id !== this.selfId).slice(0, 8);
     const active = new Set(ids);
     Array.from(this.peers.keys()).forEach(id => { if (!active.has(id)) this.dropPeer(id); });
@@ -250,6 +259,7 @@ export class TickerRoomClient {
       if (!this.joined) return;
       try {
         const room = await this.t.tickerRoomHeartbeat(this.symbol, this.mode, this.speaking, this.muted);
+        this.learnSelf(room);
         this.set({ room }); await this.syncPeers(room.members || []);
       } catch { /* the next beat retries */ }
       this.heartbeatTimer = setTimeout(beat, 12000);
