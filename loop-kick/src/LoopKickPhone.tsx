@@ -52,6 +52,15 @@ const NOTIF_TINTS = [
   'linear-gradient(140deg,#ff5c7a,#d42a4c)',
   'linear-gradient(140deg,#b98cff,#8a55e0)',
 ];
+/* the stored sentence starts with the member's name OR the handle it was written
+   with — either way the row's title already says who, so drop that lead */
+function stripLead(message: string, leads: Array<string | undefined>): string {
+  const m = String(message || '');
+  for (const lead of leads) {
+    if (lead && m.toLowerCase().startsWith(String(lead).toLowerCase())) return m.slice(String(lead).length).replace(/^[\s:,-]+/, '');
+  }
+  return m;
+}
 const PEER_NAME = typeof window !== 'undefined' ? (window.LOOP_KICK_CONFIG?.peerName || 'Loop') : 'Loop';
 
 const CUSTOM_EMOJIS: Record<string, string> = {
@@ -460,7 +469,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     id: item.id,
     /* the OTHER member leads the alert: their name is the title, their avatar the tile */
     title: item.category === 'priority' ? 'Priority alert' : (item.actor?.name || (item.source === 'loop_bucks' ? 'Loop Bucks' : 'StockMarketLoop')),
-    text: item.actor?.name && item.message.toLowerCase().startsWith(item.actor.name.toLowerCase()) ? item.message.slice(item.actor.name.length).replace(/^[\s:,-]+/, '') : item.message,
+    text: stripLead(item.message, [item.actor?.name, item.actor?.handle]),
     type: item.type,
     actor: item.actor || null,
     canFollowBack: item.canFollowBack,
