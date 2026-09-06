@@ -51,6 +51,9 @@ export class TickerRoomClient {
   private signalAfter = 0;
   private signalTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  private missing = new Map<number, number>();          /* peer id -> consecutive presence lists without them */
+  private lastMembers = new Set<number>();
+  private grace = new Map<number, ReturnType<typeof setTimeout>>();
   private lookTimer: ReturnType<typeof setTimeout> | null = null;
   private ice: RTCConfiguration | null = null;
   private audioHost: HTMLElement | null = null;
@@ -84,7 +87,7 @@ export class TickerRoomClient {
   }
   private scheduleLook() {
     if (this.lookTimer) clearTimeout(this.lookTimer);
-    this.lookTimer = setTimeout(() => { void this.refresh().then(() => this.scheduleLook()); }, this.joined ? 3500 : 12000);
+    this.lookTimer = setTimeout(() => { void this.refresh().then(() => this.scheduleLook()); }, this.joined ? 8000 : 12000);   /* heartbeats already carry the room while joined */
   }
   /* The room payload carries current_user_id: that is how we know which member is us. Without it
      (selfId 0) we treated ourselves as a peer and offered calls to our own id — every signal came
@@ -190,7 +193,22 @@ export class TickerRoomClient {
     else pc.addTransceiver('audio', { direction: 'recvonly' });
     pc.onicecandidate = ev => { if (ev.candidate) void this.t.tickerRoomSignal(this.symbol, id, 'candidate', ev.candidate.toJSON ? ev.candidate.toJSON() : (ev.candidate as any)).catch(() => {}); };
     pc.ontrack = ev => this.attach(id, ev.streams[0] || new MediaStream([ev.track]));
-    pc.onconnectionstatechange = () => { if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) this.dropPeer(id); };
+    /* 'disconnected' is usually a blip that heals in seconds; only a connection down for 10s is torn down,
+       and the lower id re-offers while the peer is still in the room. */
+    pc.onconnectionstatechange = () => {
+      const st = pc.connectionState;
+      if (st === 'connected') { const g = this.grace.get(id); if (g) clearTimeout(g); this.grace.delete(id); this.missing.delete(id); return; }
+      if (st === 'closed') { this.dropPeer(id); return; }
+      if (st === 'failed') { try { pc.restartIce(); } catch { /* older engines */ } }
+      if ((st === 'failed' || st === 'disconnected') && !this.grace.has(id)) {
+        this.grace.set(id, setTimeout(() => {
+          this.grace.delete(id);
+          if (this.peers.get(id) !== pc || !['failed', 'disconnected', 'closed'].includes(pc.connectionState)) return;
+          this.dropPeer(id);
+          if (this.joined && this.lastMembers.has(id) && this.selfId < id) void this.offer(id).catch(() => {});
+        }, 10000));
+      }
+    };
     return pc;
   }
   private async offer(id: number) {
@@ -222,7 +240,15 @@ export class TickerRoomClient {
     if (!this.joined || !this.selfId) return;   /* never mesh until we know who we are */
     const ids = (members || []).map(m => Number(m.id || 0)).filter(id => id && id !== this.selfId).slice(0, 8);
     const active = new Set(ids);
-    Array.from(this.peers.keys()).forEach(id => { if (!active.has(id)) this.dropPeer(id); });
+    this.lastMembers = active;
+    Array.from(this.peers.keys()).forEach(id => {
+      if (active.has(id)) { this.missing.delete(id); return; }
+      /* the presence list lags (throttled heartbeats): a connection that is still up is the truth */
+      const miss = (this.missing.get(id) || 0) + 1; this.missing.set(id, miss);
+      const pc = this.peers.get(id);
+      if (pc && pc.connectionState === 'connected' && miss < 6) return;
+      if (miss >= 3) { this.dropPeer(id); this.missing.delete(id); }
+    });
     for (const id of ids) { if (!this.peers.has(id) && this.selfId < id) await this.offer(id).catch(() => {}); }
   }
   private attach(id: number, stream: MediaStream) {
@@ -231,6 +257,7 @@ export class TickerRoomClient {
     a.srcObject = stream; a.play().catch(() => {});
   }
   private dropPeer(id: number) {
+    const g = this.grace.get(id); if (g) clearTimeout(g); this.grace.delete(id);
     const pc = this.peers.get(id); if (pc) pc.close();
     this.peers.delete(id); this.pending.delete(id);
     const a = this.sinks.get(id); if (a) { a.srcObject = null; a.remove(); this.sinks.delete(id); }
@@ -249,7 +276,10 @@ export class TickerRoomClient {
         const st = Number((e as any)?.status || 0);
         if (st === 409 || st === 401) { await this.leave(false); return; }
       }
-      this.signalTimer = setTimeout(poll, 1100);
+      /* fast while a peer is still connecting, relaxed once the mesh is up (each poll is a full request) */
+      const pcs = Array.from(this.peers.values());
+      const settled = pcs.length > 0 && pcs.every(pc => pc.connectionState === 'connected');
+      this.signalTimer = setTimeout(poll, pcs.length === 0 ? 2000 : (settled ? 3000 : 1100));
     };
     void poll();
   }

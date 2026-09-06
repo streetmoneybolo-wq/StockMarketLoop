@@ -599,6 +599,18 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     } catch (error) { this.setState({ uploading: false, sendError: (error as Error).message }); }
   };
 
+  private markAllRead = async () => {
+    this.setState(prev => ({ notifs: prev.notifs.map(n => ({ ...n, unread: false })) }));
+    try { const r = await this.transport.updateNotification({ action: 'read_all' }); if (r && Array.isArray(r.items)) this.setState({ notifs: r.items.map(this.notification) }); } catch { /* optimistic state stands; the next bootstrap reconciles */ }
+  };
+
+  private clearAll = async () => {
+    const before = this.state.notifs;
+    this.setState({ notifs: [] });
+    try { const r = await this.transport.updateNotification({ action: 'clear_all' }); if (r && Array.isArray(r.items)) this.setState({ notifs: r.items.map(this.notification) }); }
+    catch { this.setState({ notifs: before }); }
+  };
+
   private markNotification = async (item: Notif) => {
     this.setState(p => ({ notifs: p.notifs.map(n => n.id === item.id ? { ...n, unread: false } : n) }));
     if (!item.id.startsWith('demo-')) {
@@ -929,6 +941,20 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
                       {s.tab === 'notifs' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {s.notifs.length > 0 && (
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, padding: '0 2px 2px' }}>
+                              {s.notifs.some(n => n.unread) && (
+                                <button type="button" onClick={() => void this.markAllRead()}
+                                  style={{ border: '1px solid rgba(255,255,255,.12)', borderRadius: 999, padding: '5px 10px', fontSize: 9, fontWeight: 700, letterSpacing: .4, cursor: 'pointer', background: '#0e1721', color: '#cfe4f7' }}>
+                                  Mark all read
+                                </button>
+                              )}
+                              <button type="button" onClick={() => void this.clearAll()}
+                                style={{ border: 0, borderRadius: 999, padding: '5px 10px', fontSize: 9, fontWeight: 700, letterSpacing: .4, cursor: 'pointer', background: acc.c, color: acc.fg }}>
+                                Clear all
+                              </button>
+                            </div>
+                          )}
                           {s.notifs.map((n, i) => (
                             <div key={n.id || i} onClick={() => void this.markNotification(n)}
                               style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '10px 12px', borderRadius: 13, cursor: 'pointer', background: n.unread ? 'linear-gradient(160deg,#0b1620 0%,#081018 100%)' : '#070d13', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.04)' }}>
@@ -938,7 +964,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               <div style={{ minWidth: 0, flex: 1 }}>
                                 <div style={{ fontSize: 11.5, fontWeight: 600, color: n.actor ? '#5db9ff' : '#e8edf2', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.title}</div>
                                 <div style={{ fontSize: 11, color: '#7e8a96', lineHeight: 1.45 }}>{n.text}</div>
-                                {(n.link || n.type === 'dm') && <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, marginTop: 4 }}>{n.type === 'dm' ? 'OPEN MESSAGE →' : n.type === 'live' ? 'WATCH LIVE →' : n.type === 'video' ? 'WATCH →' : n.type === 'follow' ? 'VIEW PROFILE →' : 'VIEW POST →'}</div>}
+                                {(n.link || n.type === 'dm') && <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, marginTop: 4 }}>{n.type === 'dm' ? 'OPEN MESSAGE →' : n.type === 'live' ? 'WATCH LIVE →' : n.type === 'video' ? 'WATCH →' : n.type === 'follow' ? 'VIEW PROFILE →' : n.type === 'news' ? 'READ ON THE LOOP →' : n.type === 'mention' ? 'SEE WHERE YOU WERE TAGGED →' : (n.type === 'loop_bucks' || n.type === 'gift') ? 'OPEN WALLET →' : 'VIEW POST →'}</div>}
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginLeft: 'auto', flex: 'none' }}>
                                 <div style={{ fontFamily: mono, fontSize: 8.5, color: '#4a545e' }}>{n.time}</div>
