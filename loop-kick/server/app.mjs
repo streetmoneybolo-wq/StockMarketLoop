@@ -356,37 +356,39 @@ export function createLoopKickServer(options = {}) {
   // Company logo per ticker, via massive.com ticker branding. Image bytes are
   // cached in memory (7d, misses 1h) so massive is hit at most once per symbol.
   const logoCache = new Map(); // SYM -> { at, type, buf } (buf null = known miss)
-  let watchCache = { at: 0, body: null };
-  app.get('/api/watch', async (_req, res) => {
-    // Live stream + uploaded videos for the device's Watch deck. 30s cache.
+  // Watch deck: the site's watch index (public /watch/ videos + live streams, searchable) plus the
+  // desk's viewer count; a YouTube desk stream from /watch/ when nothing else is on air. 20s cache per query.
+  const watchCache = new Map();
+  app.get('/api/watch', async (req, res) => {
+    const q = String(req.query.q || '').trim().slice(0, 60);
     try {
-      if (watchCache.body && Date.now() - watchCache.at < 30000) return res.json(watchCache.body);
+      const hit = watchCache.get(q);
+      if (hit && Date.now() - hit.at < 20000) return res.json(hit.body);
       const handle = 'grandmasterobi';
-      const out = { live: { active: false, playback: '', ytId: '', title: '' }, viewers: 0, videos: [] };
       const tasks = await Promise.allSettled([
-        fetch(`https://stockmarketloop.com/wp-json/sml-live/v1/feeds/${handle}`, { signal: AbortSignal.timeout(7000) }).then((r) => r.json()),
-        fetch('https://stockmarketloop.com/watch/', { redirect: 'follow', signal: AbortSignal.timeout(9000) }).then((r) => r.text()),
-        fetch('https://stockmarketloop.com/wp-json/wp/v2/media?media_type=video&per_page=8&_fields=id,title,source_url,date', { signal: AbortSignal.timeout(7000) }).then((r) => r.json()),
+        fetch('https://stockmarketloop.com/wp-json/sml-watch-index/v1/index?q=' + encodeURIComponent(q), { signal: AbortSignal.timeout(8000) }).then((r) => r.json()),
         fetch(`https://stockmarketloop.com/wp-json/sml-lw/v1/presence?handle=${handle}`, { signal: AbortSignal.timeout(7000) }).then((r) => r.json()),
+        q ? Promise.resolve('') : fetch('https://stockmarketloop.com/watch/', { redirect: 'follow', signal: AbortSignal.timeout(9000) }).then((r) => r.text()),
       ]);
-      const feeds = tasks[0].status === 'fulfilled' ? tasks[0].value : null;
-      if (feeds && feeds.live) {
-        const slot = (feeds.slots || []).find((s) => s && s.live && s.playback);
-        if (slot) { out.live.active = true; out.live.playback = slot.playback; }
+      const body = { live: [], videos: [], viewers: 0 };
+      const idx = tasks[0].status === 'fulfilled' ? tasks[0].value : null;
+      if (idx && typeof idx === 'object') {
+        body.live = Array.isArray(idx.live) ? idx.live : [];
+        body.videos = Array.isArray(idx.videos) ? idx.videos : [];
       }
-      const page = tasks[1].status === 'fulfilled' ? String(tasks[1].value) : '';
-      const yt = /youtube\.com\/(?:live\/|watch\?v=|embed\/)([A-Za-z0-9_-]{8,14})/.exec(page);
-      if (yt) { out.live.ytId = yt[1]; if (!out.live.playback) out.live.active = true; }
-      const ogTitle = /<meta property="og:title" content="([^"]+)"/.exec(page);
-      if (ogTitle) out.live.title = ogTitle[1];
-      const media = tasks[2].status === 'fulfilled' && Array.isArray(tasks[2].value) ? tasks[2].value : [];
-      out.videos = media
-        .filter((m) => m && m.source_url)
-        .map((m) => ({ id: m.id, title: String((m.title && m.title.rendered) || 'Video').replace(/<[^>]*>/g, ''), url: m.source_url, date: String(m.date || '').slice(0, 10) }));
-      const pres = tasks[3].status === 'fulfilled' ? tasks[3].value : null;
-      if (pres && typeof pres.count === 'number') out.viewers = pres.count;
-      watchCache = { at: Date.now(), body: out };
-      res.json(out);
+      const page = tasks[2].status === 'fulfilled' ? String(tasks[2].value || '') : '';
+      if (page && !body.live.some((l) => l && l.src)) {
+        const yt = /youtube\.com\/(?:live\/|watch\?v=|embed\/)([A-Za-z0-9_-]{8,14})/.exec(page);
+        if (yt) {
+          const ogTitle = /<meta property="og:title" content="([^"]+)"/.exec(page);
+          body.live.unshift({ kind: 'live', id: 'yt-' + yt[1], status: 'live', title: (ogTitle && ogTitle[1]) || 'Loop Live Desk', ytId: yt[1], url: 'https://stockmarketloop.com/live/', creator: 'Loop Desk', handle });
+        }
+      }
+      const pres = tasks[1].status === 'fulfilled' ? tasks[1].value : null;
+      if (pres && typeof pres.count === 'number') body.viewers = pres.count;
+      if (watchCache.size > 200) watchCache.clear();
+      watchCache.set(q, { at: Date.now(), body });
+      res.json(body);
     } catch {
       res.status(502).json({ message: 'watch sources unavailable' });
     }

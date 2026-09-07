@@ -256,24 +256,42 @@ export function createTransport(): Transport {
   return cfg.transport === 'live' ? liveTransport(cfg) : mockTransport();
 }
 
-/* ---------------- Watch deck data (live stream + uploaded videos) ---------------- */
+/* ---------------- Watch deck data (Loop Channel videos + live streams) ---------------- */
 
-export interface WatchVideo { id: number; title: string; url: string; date: string; }
+export interface WatchItem {
+  kind: 'vod' | 'live';
+  id: string;
+  title: string;
+  /** mp4 or HLS (.m3u8) playback url; empty for a scheduled stream or a YouTube-only desk stream */
+  src?: string;
+  ytId?: string;
+  poster?: string;
+  url: string;
+  creator?: string;
+  handle?: string;
+  date?: string;
+  duration?: number;
+  description?: string;
+  status?: string;
+  /** hand-off from a watch page: resume here (seconds) */
+  time?: number;
+}
 export interface WatchData {
-  live: { active: boolean; playback: string; ytId: string; title: string };
+  live: WatchItem[];
+  videos: WatchItem[];
   viewers: number;
-  videos: WatchVideo[];
 }
 
-/** Same-origin /api/watch — the server aggregates the live feed, the current
- *  YouTube stream, uploaded videos, and the watch-page viewer count. */
-export async function fetchWatch(): Promise<WatchData | null> {
+/** Same-origin /api/watch?q= — the server folds the site's watch index (public
+ *  /watch/ videos + live streams) with the desk's viewer count. */
+export async function fetchWatch(q = ''): Promise<WatchData | null> {
   try {
-    const response = await fetch('/api/watch', { signal: AbortSignal.timeout(9000) });
+    const response = await fetch('/api/watch' + (q ? '?q=' + encodeURIComponent(q) : ''), { signal: AbortSignal.timeout(9000) });
     if (!response.ok) return null;
     const body = (await response.json()) as WatchData;
-    return body && body.live ? body : null;
+    return body && Array.isArray(body.videos) ? body : null;
   } catch {
     return null;
   }
 }
+
