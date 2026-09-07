@@ -359,6 +359,19 @@ export function createLoopKickServer(options = {}) {
   // Watch deck: the site's watch index (public /watch/ videos + live streams, searchable) plus the
   // desk's viewer count; a YouTube desk stream from /watch/ when nothing else is on air. 20s cache per query.
   const watchCache = new Map();
+  const ytLiveCache = new Map();   // video id -> { at, live }: YouTube's own "isLiveNow" flag, 60s
+  async function youtubeIsLive(id) {
+    const hit = ytLiveCache.get(id);
+    if (hit && Date.now() - hit.at < 60000) return hit.live;
+    let live = false;
+    try {
+      const html = await fetch('https://www.youtube.com/watch?v=' + encodeURIComponent(id), { headers: { 'user-agent': 'Mozilla/5.0', 'accept-language': 'en' }, signal: AbortSignal.timeout(6000) }).then((r) => r.text());
+      live = /"isLiveNow"\s*:\s*true/.test(html);
+    } catch { live = false; }
+    if (ytLiveCache.size > 100) ytLiveCache.clear();
+    ytLiveCache.set(id, { at: Date.now(), live });
+    return live;
+  }
   app.get('/api/watch', async (req, res) => {
     const q = String(req.query.q || '').trim().slice(0, 60);
     try {
@@ -381,7 +394,10 @@ export function createLoopKickServer(options = {}) {
         const yt = /youtube\.com\/(?:live\/|watch\?v=|embed\/)([A-Za-z0-9_-]{8,14})/.exec(page);
         if (yt) {
           const ogTitle = /<meta property="og:title" content="([^"]+)"/.exec(page);
-          body.live.unshift({ kind: 'live', id: 'yt-' + yt[1], status: 'live', title: (ogTitle && ogTitle[1]) || 'Loop Live Desk', ytId: yt[1], url: 'https://stockmarketloop.com/live/', creator: 'Loop Desk', handle });
+          const item = { id: 'yt-' + yt[1], title: (ogTitle && ogTitle[1]) || 'Loop Live Desk', ytId: yt[1], url: 'https://stockmarketloop.com/live/', creator: 'Loop Desk', handle };
+          /* only a stream YouTube itself reports as on air is a LIVE row; otherwise the desk video is an ordinary video */
+          if (await youtubeIsLive(yt[1])) body.live.unshift({ ...item, kind: 'live', status: 'live' });
+          else body.videos.unshift({ ...item, kind: 'vod', date: '' });
         }
       }
       const pres = tasks[1].status === 'fulfilled' ? tasks[1].value : null;
