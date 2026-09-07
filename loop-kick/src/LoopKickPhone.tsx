@@ -171,6 +171,7 @@ interface State {
   watchStart: number;            /* resume offset handed over by a watch page */
   watchNeedTap: boolean;         /* autoplay had to stay muted: show 'tap for sound' */
   deckH: number;                 /* measured height of the bottom deck: the top screen yields so the phone never leaves the frame */
+  fit: number;                   /* last resort: the whole device scales down (bottom-right anchored) when its measured height exceeds the frame */
 }
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
@@ -199,6 +200,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     watchStart: 0,
     watchNeedTap: false,
     deckH: 0,
+    fit: 1,
     callSec: 0,
     muted: false,
     camOff: false,
@@ -333,6 +335,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   componentDidUpdate(_previousProps: Props, previousState: State) {
     if (previousState.draft !== this.state.draft && this._composer) this.growComposer(this._composer);
     this.measureDeck();
+    this.fitDevice();
     if (
       previousState.open !== this.state.open
       || previousState.slid !== this.state.slid
@@ -366,6 +369,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
     /* ---- the existing StockMarketLoop messenger is the source of truth ---- */
     window.addEventListener('message', this._onParentMessage);
+    /* any content change inside the device (a growing composer, an image finishing its load, a longer thread) re-checks the fit */
+    if (typeof ResizeObserver !== 'undefined' && this._device.current) { this._deviceObserver = new ResizeObserver(() => this.fitDevice()); this._deviceObserver.observe(this._device.current); }
     const snap = readSnapshot();
     if (snap) { this._hasSnapshot = true; this.applyBootstrap(snap, false); }
     if (!PREWARM) this.goLive();
@@ -408,6 +413,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     window.removeEventListener('keydown', this._key);
     window.removeEventListener('resize', this._resize);
     window.removeEventListener('message', this._onParentMessage);
+    if (this._deviceObserver) { this._deviceObserver.disconnect(); this._deviceObserver = null; }
     this.detachHls();
     if (this._watchTimer) clearTimeout(this._watchTimer);
     if (this._interval) clearInterval(this._interval);
@@ -625,6 +631,21 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   /* ---- the deck's real height (owner call 2026-09-07: while messaging the phone grew and its top screen was
      pushed above the frame). The top screen shrinks to whatever the deck leaves, so the whole phone stays visible. ---- */
+  /* ---- the whole device must fit the frame, whatever is inside it (owner call 2026-09-07: "make sure it never
+     happens again"). The top screen already yields to the deck; if the column is STILL taller than the frame
+     (a long draft, a tall mode, a short window), the device scales down around its bottom-right corner. ---- */
+  private _device = React.createRef<HTMLDivElement>();
+  private _deviceObserver: ResizeObserver | null = null;
+  private fitDevice = () => {
+    const el = this._device.current;
+    if (!el || !this.state.open) return;
+    const natural = el.offsetHeight;                              /* layout height: unaffected by the parent's scale or its transition */
+    if (natural < 1) return;
+    const avail = Math.max(200, (this.state.vh || window.innerHeight) - 44);   /* 30px bottom offset + 14px breathing room */
+    const k = Math.min(1, Math.round((avail / natural) * 100) / 100);
+    if (Math.abs(k - this.state.fit) > 0.01) this.setState({ fit: k });
+  };
+
   private measureDeck = () => {
     const el = this._bottomSurface.current;
     if (!el || !this.state.open) return;
@@ -915,8 +936,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
         </div>
 
         {/* ---- device ---- */}
-        <div style={{ position: 'fixed', right: 30, bottom: 30, zIndex: 80, display: s.open ? 'block' : 'none', maxHeight: 'calc(100vh - 44px)', perspective: 1050, perspectiveOrigin: '72% 40%', ['--acc' as string]: acc.c }}>
-          <div className="lk-device3d" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transform: 'rotateX(7deg) rotateY(-12deg) rotateZ(-0.6deg)', transformStyle: 'preserve-3d', fontFamily: deviceFont, filter: `drop-shadow(0 58px 64px rgba(0,0,0,.72)) drop-shadow(0 16px 22px rgba(0,0,0,.55)) drop-shadow(0 0 46px ${acc.c}26)`, willChange: 'transform' }}>
+        <div style={{ position: 'fixed', right: 30, bottom: 30, zIndex: 80, display: s.open ? 'block' : 'none', perspective: 1050, perspectiveOrigin: '72% 40%', transform: `scale(${s.fit})`, transformOrigin: 'bottom right', transition: 'transform .22s ease', ['--acc' as string]: acc.c }}>
+          <div ref={this._device} className="lk-device3d" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transform: 'rotateX(7deg) rotateY(-12deg) rotateZ(-0.6deg)', transformStyle: 'preserve-3d', fontFamily: deviceFont, filter: `drop-shadow(0 58px 64px rgba(0,0,0,.72)) drop-shadow(0 16px 22px rgba(0,0,0,.55)) drop-shadow(0 0 46px ${acc.c}26)`, willChange: 'transform' }}>
 
             {/* ---- top fold ---- */}
             <div style={{ height: s.slid ? screen + 148 : 0, overflow: 'visible', transition: 'height .42s cubic-bezier(.2,.8,.25,1)', display: 'flex', alignItems: 'flex-end' }}>
