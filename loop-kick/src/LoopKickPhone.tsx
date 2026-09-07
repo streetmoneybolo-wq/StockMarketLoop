@@ -184,6 +184,7 @@ interface State {
   watchNeedTap: boolean;         /* autoplay had to stay muted: show 'tap for sound' */
   deckH: number;                 /* measured height of the bottom deck: the top screen yields so the phone never leaves the frame */
   fit: number;                   /* last resort: the whole device scales down (bottom-right anchored) when its measured height exceeds the frame */
+  typingNames: string[];         /* who is typing in the open conversation right now */
 }
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
@@ -213,6 +214,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     watchNeedTap: false,
     deckH: 0,
     fit: 1,
+    typingNames: [],
     callSec: 0,
     muted: false,
     camOff: false,
@@ -346,6 +348,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   componentDidUpdate(_previousProps: Props, previousState: State) {
     if (previousState.draft !== this.state.draft && this._composer) this.growComposer(this._composer);
+    if (previousState.draft !== this.state.draft) this.noteTyping();
     this.measureDeck();
     this.fitDevice();
     if (
@@ -626,7 +629,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (this._live) return;
     this._live = true;
     const first = this.state.threads.length ? this.refreshSummary() : this.hydrate();
-    void first.finally(() => { if (this._live) this.transport.connect(this.onIncoming, () => void this.refreshSummary()); });
+    void first.finally(() => { if (this._live) this.transport.connect(this.onIncoming, () => void this.refreshSummary(), names => { if (names.join('|') !== this.state.typingNames.join('|')) this.setState({ typingNames: names }); }); });
     if (this._chirpTick && !this._chirpTimer) this._chirpTimer = setInterval(this._chirpTick, 2800);
     this.startNotifPolling();
   };
@@ -686,6 +689,21 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   };
   private stopNotifPolling = () => { if (this._notifTimer) clearTimeout(this._notifTimer); this._notifTimer = null; };
 
+  /* ---- "… is typing" (owner call 2026-09-07): while the draft has text we tell the server every 4s,
+     and stop 6s after the last keystroke or when the draft empties (sending empties it). ---- */
+  private _typingOn = false;
+  private _typingSentAt = 0;
+  private _typingOffTimer: ReturnType<typeof setTimeout> | null = null;
+  private noteTyping = () => {
+    const id = this.state.activeThreadId;
+    if (!id || this.state.mode !== 'compose' || this.transport.name !== 'live') return;
+    const has = this.state.draft.trim().length > 0;
+    if (this._typingOffTimer) { clearTimeout(this._typingOffTimer); this._typingOffTimer = null; }
+    if (!has) { if (this._typingOn) { this._typingOn = false; void this.transport.typing(id, false).catch(() => {}); } return; }
+    if (!this._typingOn || Date.now() - this._typingSentAt > 4000) { this._typingOn = true; this._typingSentAt = Date.now(); void this.transport.typing(id, true).catch(() => {}); }
+    this._typingOffTimer = setTimeout(() => { this._typingOn = false; void this.transport.typing(id, false).catch(() => {}); }, 6000);
+  };
+
   private _onParentMessage = (event: MessageEvent) => {
     if (event.source !== window.parent) return;
     const type = event.data && (event.data as { type?: string }).type;
@@ -720,7 +738,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   private openThread = async (thread: ThreadSummary) => {
     this.transport.setActiveThread(thread.id);
-    this.setState({ activeThreadId: thread.id, thread: [], loading: true, sendError: '', tab: 'messages' });
+    this.setState({ activeThreadId: thread.id, thread: [], loading: true, sendError: '', tab: 'messages', typingNames: [] });
     try {
       const messages = await this.transport.load(thread.id);
       this.setState({ thread: messages.map(this.wireToThread), loading: false });
@@ -1037,6 +1055,12 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                   </div>
                                 </div>
                               ))}
+                              {s.typingNames.length > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#98a3ad', fontSize: 10.5, padding: '2px 6px', animation: 'msgIn .2s ease' }}>
+                                  <span className="lk-typing" aria-hidden="true"><i /><i /><i /></span>
+                                  <span><strong style={{ color: '#c3ccd4' }}>{s.typingNames.join(', ')}</strong> {s.typingNames.length > 1 ? 'are' : 'is'} typing…</span>
+                                </div>
+                              )}
                             </>
                           ) : (
                             <>

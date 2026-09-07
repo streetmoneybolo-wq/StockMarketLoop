@@ -99,7 +99,9 @@ export interface Transport {
   tickerRoomLeave(symbol: string): Promise<any>;
   tickerRoomSignals(symbol: string, after: number): Promise<{ signals: any[]; server_time: number }>;
   tickerRoomSignal(symbol: string, toUserId: number, type: string, payload: any): Promise<any>;
-  connect(onMessage: (m: WireMessage) => void, onRefresh?: () => void): void;
+  /** tell the other side we are (or stopped) typing in a thread */
+  typing(threadId: number, on: boolean): Promise<unknown>;
+  connect(onMessage: (m: WireMessage) => void, onRefresh?: () => void, onTyping?: (names: string[]) => void): void;
   disconnect(): void;
 }
 
@@ -150,6 +152,7 @@ function mockTransport(): Transport {
     tickerRoomLeave: async (symbol) => ({ symbol, count: 0, members: [] }),
     tickerRoomSignals: async () => ({ signals: [], server_time: Date.now() }),
     tickerRoomSignal: async () => ({ ok: true }),
+    typing: async () => ({}),
     connect: cb => { callback = cb; void callback; }, disconnect: () => { callback = null; },
   };
 }
@@ -162,6 +165,7 @@ function liveTransport(cfg: LoopKickConfig): Transport {
   let stopped = false;
   let onMessage: ((m: WireMessage) => void) | null = null;
   let onRefresh: (() => void) | null = null;
+  let onTyping: ((names: string[]) => void) | null = null;
 
   const headers = (json = false): HeadersInit => ({
     ...(cfg.sessionToken ? { Authorization: `Bearer ${cfg.sessionToken}` } : {}),
@@ -201,9 +205,13 @@ function liveTransport(cfg: LoopKickConfig): Transport {
   async function poll() {
     if (stopped) return;
     try {
-      const query = pollAt ? `?since=${encodeURIComponent(pollAt)}` : '';
-      const data = await request<{ now: string; changed: { id: number }[] }>(`/api/poll${query}`);
+      const params = new URLSearchParams();
+      if (pollAt) params.set('since', pollAt);
+      if (activeThread) params.set('thread', String(activeThread));   /* the poll answers with who is typing there */
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const data = await request<{ now: string; changed: { id: number }[]; typing?: { id: number; name: string }[] }>(`/api/poll${query}`);
       pollAt = data.now;
+      if (onTyping) onTyping(Array.isArray(data.typing) ? data.typing.map(x => String(x && x.name || '')).filter(Boolean) : []);
       if (activeThread && (data.changed || []).some(item => Number(item.id) === activeThread)) {
         for (const message of await load(activeThread, after)) onMessage?.(message);
       }
@@ -250,8 +258,9 @@ function liveTransport(cfg: LoopKickConfig): Transport {
     tickerRoomLeave: symbol => request('/api/ticker-room/leave', { method: 'POST', body: JSON.stringify({ symbol }) }),
     tickerRoomSignals: (symbol, after) => request(`/api/ticker-room/signals?symbol=${encodeURIComponent(symbol)}&after=${Number(after) || 0}`),
     tickerRoomSignal: (symbol, toUserId, type, payload) => request('/api/ticker-room/signals', { method: 'POST', body: JSON.stringify({ symbol, to_user_id: toUserId, type, payload }) }),
-    connect: (messageCb, refreshCb) => { onMessage = messageCb; onRefresh = refreshCb || null; stopped = false; void poll(); },
-    disconnect: () => { stopped = true; if (timer) clearTimeout(timer); timer = null; onMessage = null; onRefresh = null; },
+    typing: (threadId, on) => request('/api/typing', { method: 'POST', body: JSON.stringify({ thread_id: threadId, typing: on }) }),
+    connect: (messageCb, refreshCb, typingCb) => { onMessage = messageCb; onRefresh = refreshCb || null; onTyping = typingCb || null; stopped = false; void poll(); },
+    disconnect: () => { stopped = true; if (timer) clearTimeout(timer); timer = null; onMessage = null; onRefresh = null; onTyping = null; },
   };
 }
 

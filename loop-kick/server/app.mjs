@@ -214,6 +214,7 @@ export function createLoopKickServer(options = {}) {
   }
   app.delete('/api/messages/:id', (req, res) => proxy(req, res, 'DELETE', `/sml-loop/v1/messages/${Number(req.params.id)}`));
   app.get('/api/poll', (req, res) => proxy(req, res, 'GET', '/sml-loop/v1/poll', req.query));
+  app.post('/api/typing', (req, res) => proxy(req, res, 'POST', '/sml-loop-typing/v1/typing', req.body));   // "… is typing" (plugin sml-loop-typing)
   app.get('/api/people', (req, res) => proxy(req, res, 'GET', '/sml-mhub/v1/people'));
   app.get('/api/search', (req, res) => proxy(req, res, 'GET', '/sml-mhub/v1/search', req.query));
   app.get('/api/notifications', (req, res) => proxy(req, res, 'GET', '/sml-mhub/v1/notifications'));

@@ -40,3 +40,10 @@ input, button, textarea { font: inherit; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* "… is typing" dots in the conversation */
+.lk-typing { display: inline-flex; gap: 3px; align-items: center; }
+.lk-typing i { width: 5px; height: 5px; border-radius: 50%; background: #98a3ad; display: block; animation: lkTyping 1.2s infinite; }
+.lk-typing i:nth-child(2) { animation-delay: .2s; }
+.lk-typing i:nth-child(3) { animation-delay: .4s; }
+@keyframes lkTyping { 0%, 60%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
