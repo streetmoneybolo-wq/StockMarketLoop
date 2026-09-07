@@ -118,7 +118,19 @@ function loadHls(): Promise<any> {
 
 /* ---------------- types ---------------- */
 
-interface ThreadMsg { id: string; from: 'me' | 'them'; text: string; media?: { id: number; mime: string; url: string }[]; }
+interface ThreadMsg { id: string; from: 'me' | 'them'; text: string; media?: { id: number; mime: string; url: string }[]; ts?: number; }
+
+/* when a message was sent: time today, 'Yesterday 3:42 PM', else 'Sep 6 3:42 PM' (owner call 2026-09-07) */
+function fmtTs(ts?: number): string {
+  if (!ts) return '';
+  const d = new Date(ts); if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return time;
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return 'Yesterday ' + time;
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
+}
 interface Notif { id: string; title: string; text: string; time: string; tint: string; unread: boolean; link?: string; category?: string; type?: string; actor?: SiteNotification['actor']; canFollowBack?: boolean; following?: boolean; }
 interface RoomMsg { user: string; color: string; text: string; }
 
@@ -569,7 +581,11 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     from: m.mine ? 'me' : 'them',
     text: m.text,
     media: m.media,
+    ts: m.ts,
   });
+
+  /* Alerts = site alerts only; message items (type dm) belong to the Messages tab (owner call 2026-09-07) */
+  private toNotifs = (items: SiteNotification[]): Notif[] => (items || []).filter(item => item && item.type !== 'dm' && item.type !== 'message').map(this.notification);
 
   private notification = (item: SiteNotification, index: number): Notif => ({
     id: item.id,
@@ -593,7 +609,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       threads,
       activeThreadId: active,
       people: data.people?.friends || [],
-      notifs: (data.notifications?.items || []).map(this.notification),
+      notifs: this.toNotifs(data.notifications?.items || []),
       preferences: data.preferences || {},
       chirpPrefs: data.chirp || {},
       loading: false,
@@ -661,7 +677,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     const tick = async () => {
       if (!this._live) return;
       if (document.visibilityState !== 'hidden') {
-        try { const r = await this.transport.notifications(); if (r && Array.isArray(r.items)) this.setState({ notifs: r.items.map(this.notification) }); }
+        try { const r = await this.transport.notifications(); if (r && Array.isArray(r.items)) this.setState({ notifs: this.toNotifs(r.items) }); }
         catch { /* the next tick retries */ }
       }
       if (this._live) this._notifTimer = setTimeout(tick, document.visibilityState === 'hidden' ? 30000 : 7000);
@@ -747,13 +763,13 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   private markAllRead = async () => {
     this.setState(prev => ({ notifs: prev.notifs.map(n => ({ ...n, unread: false })) }));
-    try { const r = await this.transport.updateNotification({ action: 'read_all' }); if (r && Array.isArray(r.items)) this.setState({ notifs: r.items.map(this.notification) }); } catch { /* optimistic state stands; the next bootstrap reconciles */ }
+    try { const r = await this.transport.updateNotification({ action: 'read_all' }); if (r && Array.isArray(r.items)) this.setState({ notifs: this.toNotifs(r.items) }); } catch { /* optimistic state stands; the next bootstrap reconciles */ }
   };
 
   private clearAll = async () => {
     const before = this.state.notifs;
     this.setState({ notifs: [] });
-    try { const r = await this.transport.updateNotification({ action: 'clear_all' }); if (r && Array.isArray(r.items)) this.setState({ notifs: r.items.map(this.notification) }); }
+    try { const r = await this.transport.updateNotification({ action: 'clear_all' }); if (r && Array.isArray(r.items)) this.setState({ notifs: this.toNotifs(r.items) }); }
     catch { this.setState({ notifs: before }); }
   };
 
@@ -815,28 +831,13 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     } catch (error) { this.setState({ chirpStatus: (error as Error).message }); }
   };
 
-  /** Incoming message (WebSocket in live mode, canned reply in mock). */
+  /** Incoming message (poll in live mode, canned reply in mock): the open conversation gets the bubble,
+      any other conversation refreshes the thread list so the Messages badge lights — never the Alerts tab. */
   private onIncoming = (m: WireMessage) => {
     if (!m || !m.text) return;
-    const s = this.state;
-    const seen = s.open && s.slid && s.tab === 'messages';
     this.scrollBottom();
-    this.setState(p => ({
-      thread: m.threadId === p.activeThreadId ? [...p.thread, this.wireToThread(m)] : p.thread,
-      notifs: seen
-        ? p.notifs
-        : [
-            {
-              id: `message-${m.id}`,
-              title: m.from || 'Message',
-              text: m.text,
-              time: 'now',
-              tint: NOTIF_TINTS[0],
-              unread: true,
-            },
-            ...p.notifs,
-          ].slice(0, 12),
-    }));
+    if (m.threadId === this.state.activeThreadId) this.setState(p => ({ thread: [...p.thread, this.wireToThread(m)] }));
+    else void this.refreshSummary();
   };
 
   send() {
@@ -856,7 +857,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       draft: '',
       sendError: '',
       tab: 'messages',
-      thread: [...p.thread, { id: `optimistic-${Date.now()}`, from: 'me', text }],
+      thread: [...p.thread, { id: `optimistic-${Date.now()}`, from: 'me', text, ts: Date.now() }],
     }));
     this.transport.send(text).catch(err => {
       // roll back the optimistic message, restore the draft for retry
@@ -1024,6 +1025,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                   <div style={{ maxWidth: '80%', padding: '9px 13px', borderRadius: '17px 17px 5px 17px', fontSize: 12, lineHeight: 1.5, background: accentGrad, color: acc.fg, boxShadow: `0 6px 18px ${acc.c}3d, inset 0 1px 0 rgba(255,255,255,.35)` }}>
                                     {m.media?.map(media => media.mime.startsWith('image/') ? <img key={media.id} src={media.url} alt="Message attachment" style={{ display: 'block', width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 8, marginBottom: m.text ? 5 : 0 }} /> : <audio key={media.id} controls src={media.url} style={{ width: 190, maxWidth: '100%' }} />)}
                                     {customEmojiText(m.text)}
+                                    {m.ts ? <div style={{ fontFamily: mono, fontSize: 8.5, marginTop: 4, opacity: .72, textAlign: 'right', letterSpacing: .3 }}>{fmtTs(m.ts)}</div> : null}
                                   </div>
                                 </div>
                               ) : (
@@ -1031,6 +1033,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                   <div style={{ maxWidth: '80%', padding: '9px 13px', borderRadius: '17px 17px 17px 5px', fontSize: 12, lineHeight: 1.5, background: 'rgba(22,30,41,.94)', color: '#dbe4ec', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.04), 0 4px 12px rgba(0,0,0,.4)' }}>
                                     {m.media?.map(media => media.mime.startsWith('image/') ? <img key={media.id} src={media.url} alt="Message attachment" style={{ display: 'block', width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 8, marginBottom: m.text ? 5 : 0 }} /> : <audio key={media.id} controls src={media.url} style={{ width: 190, maxWidth: '100%' }} />)}
                                     {customEmojiText(m.text)}
+                                    {m.ts ? <div style={{ fontFamily: mono, fontSize: 8.5, marginTop: 4, opacity: .72, textAlign: 'right', letterSpacing: .3 }}>{fmtTs(m.ts)}</div> : null}
                                   </div>
                                 </div>
                               ))}
