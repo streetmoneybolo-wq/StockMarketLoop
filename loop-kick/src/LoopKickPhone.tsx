@@ -185,6 +185,7 @@ interface State {
   deckH: number;                 /* measured height of the bottom deck: the top screen yields so the phone never leaves the frame */
   fit: number;                   /* last resort: the whole device scales down (bottom-right anchored) when its measured height exceeds the frame */
   typingNames: string[];         /* who is typing in the open conversation right now */
+  callMenu: boolean;             /* the Call button's Voice / Video / Chirp choices */
 }
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
@@ -215,6 +216,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     deckH: 0,
     fit: 1,
     typingNames: [],
+    callMenu: false,
     callSec: 0,
     muted: false,
     camOff: false,
@@ -738,7 +740,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   private openThread = async (thread: ThreadSummary) => {
     this.transport.setActiveThread(thread.id);
-    this.setState({ activeThreadId: thread.id, thread: [], loading: true, sendError: '', tab: 'messages', typingNames: [] });
+    this.setState({ activeThreadId: thread.id, thread: [], loading: true, sendError: '', tab: 'messages', typingNames: [], callMenu: false });
     try {
       const messages = await this.transport.load(thread.id);
       this.setState({ thread: messages.map(this.wireToThread), loading: false });
@@ -1027,9 +1029,21 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                   <div style={{ fontSize: 12.5, fontWeight: 600, color: '#e8edf2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activePerson?.name || activeThread.title || `${activeThread.type} thread`}</div>
                                   <div style={{ fontSize: 9.5, color: activePerson?.presence?.stale ? '#5c6771' : acc.c }}>{activePerson?.presence?.stale ? 'offline' : (activePerson?.presence?.state || activeThread.category)}</div>
                                 </div>
-                                {(['pinned', 'muted', 'archived'] as const).map(flag => <button key={flag} onClick={() => void this.toggleFlag(flag)} title={`${activeThread[flag] ? 'Remove' : 'Set'} ${flag}`} style={{ border: 0, padding: '4px 5px', borderRadius: 6, cursor: 'pointer', background: activeThread[flag] ? acc.c : '#111a23', color: activeThread[flag] ? acc.fg : '#7e8a96', fontSize: 8 }}>{flag[0].toUpperCase()}</button>)}
+                                {(['pinned', 'muted'] as const).map(flag => <button key={flag} onClick={() => void this.toggleFlag(flag)} title={`${activeThread[flag] ? 'Remove' : 'Set'} ${flag}`} style={{ border: 0, padding: '4px 5px', borderRadius: 6, cursor: 'pointer', background: activeThread[flag] ? acc.c : '#111a23', color: activeThread[flag] ? acc.fg : '#7e8a96', fontSize: 8 }}>{flag[0].toUpperCase()}</button>)}
+                                <button onClick={() => this.setState(prev => ({ callMenu: !prev.callMenu }))} title="Call: voice, video or Chirp" style={{ border: 0, padding: '4px 7px', borderRadius: 6, cursor: 'pointer', background: s.callMenu ? acc.c : '#111a23', color: s.callMenu ? acc.fg : acc.c, fontSize: 9, fontWeight: 800 }}>☎ Call</button>
                                 {activeThread.type === 'dm' && <button onClick={() => void this.clearActiveHistory()} title="Delete private conversation history" style={{ border: 0, padding: '4px 5px', borderRadius: 6, cursor: 'pointer', background: '#241018', color: '#ff5c7a', fontSize: 8 }}>D</button>}
                               </div>
+                              {s.callMenu && (
+                                <div style={{ display: 'flex', gap: 6, padding: '6px 7px', borderRadius: 10, background: '#101820', animation: 'msgIn .2s ease' }}>
+                                  {([
+                                    ['Voice call', () => this.startCall(false)],
+                                    ['Video call', () => this.startCall(true)],
+                                    ['Chirp', () => { if (activePerson) { this.setState({ tab: 'chirp' }); void this.startChirp(activePerson); } else this.setState({ tab: 'chirp' }); }],
+                                  ] as [string, () => void][]).map(([label, go]) => (
+                                    <button key={label} onClick={() => { this.setState({ callMenu: false }); go(); }} style={{ flex: 1, border: '1px solid rgba(255,255,255,.1)', borderRadius: 999, padding: '6px 8px', fontSize: 10, fontWeight: 700, cursor: 'pointer', background: '#0a1117', color: '#e8edf2' }}>{label}</button>
+                                  ))}
+                                </div>
+                              )}
                               {activeThread.state === 'request' && (
                                 <div style={{ display: 'flex', gap: 7, padding: '7px', borderRadius: 10, background: '#101820' }}>
                                   <span style={{ flex: 1, color: '#98a3ad', fontSize: 10 }}>Message request</span>
