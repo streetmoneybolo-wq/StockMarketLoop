@@ -170,6 +170,7 @@ interface State {
   watchQ: string;                /* the search box */
   watchStart: number;            /* resume offset handed over by a watch page */
   watchNeedTap: boolean;         /* autoplay had to stay muted: show 'tap for sound' */
+  deckH: number;                 /* measured height of the bottom deck: the top screen yields so the phone never leaves the frame */
 }
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
@@ -197,6 +198,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     watchQ: '',
     watchStart: 0,
     watchNeedTap: false,
+    deckH: 0,
     callSec: 0,
     muted: false,
     camOff: false,
@@ -273,10 +275,10 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     else if (e.key === 'Escape') this.setState({ open: false, slid: false });
     else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
-      this.setState(p => ({ draft: (p.draft + e.key).slice(0, 120) }));
+      this.setState(p => ({ draft: (p.draft + e.key).slice(0, 4000) }));
     }
   };
-  private _resize = () => this.setState({ vh: window.innerHeight });
+  private _resize = () => { this.setState({ vh: window.innerHeight }); this.measureDeck(); };
 
   private publishEmbedSurface = () => {
     if (window.parent === window) return;
@@ -329,6 +331,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   scrollBottom() { this._wantScroll = true; }
 
   componentDidUpdate(_previousProps: Props, previousState: State) {
+    if (previousState.draft !== this.state.draft && this._composer) this.growComposer(this._composer);
+    this.measureDeck();
     if (
       previousState.open !== this.state.open
       || previousState.slid !== this.state.slid
@@ -407,6 +411,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     this.detachHls();
     if (this._watchTimer) clearTimeout(this._watchTimer);
     if (this._interval) clearInterval(this._interval);
+    this.stopNotifPolling();
     if (this._searchTimer) clearTimeout(this._searchTimer);
     if (this._chirpTimer) clearInterval(this._chirpTimer);
     this._surfaceTimers.forEach(timer => clearTimeout(timer));
@@ -601,13 +606,49 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     const first = this.state.threads.length ? this.refreshSummary() : this.hydrate();
     void first.finally(() => { if (this._live) this.transport.connect(this.onIncoming, () => void this.refreshSummary()); });
     if (this._chirpTick && !this._chirpTimer) this._chirpTimer = setInterval(this._chirpTick, 2800);
+    this.startNotifPolling();
   };
   private pauseLive = () => {
     if (!this._live) return;
     this._live = false;
     this.transport.disconnect();
     if (this._chirpTimer) { clearInterval(this._chirpTimer); this._chirpTimer = null; }
+    this.stopNotifPolling();
   };
+  /* ---- composer (owner call 2026-09-07): a real textarea that grows as you write (up to 7 lines) ---- */
+  private _composer: HTMLTextAreaElement | null = null;
+  private mountComposer = (el: HTMLTextAreaElement | null) => { this._composer = el; if (el) this.growComposer(el); };
+  private growComposer = (el: HTMLTextAreaElement) => {
+    el.style.height = 'auto';
+    el.style.height = Math.min(119, Math.max(17, el.scrollHeight)) + 'px';
+  };
+
+  /* ---- the deck's real height (owner call 2026-09-07: while messaging the phone grew and its top screen was
+     pushed above the frame). The top screen shrinks to whatever the deck leaves, so the whole phone stays visible. ---- */
+  private measureDeck = () => {
+    const el = this._bottomSurface.current;
+    if (!el || !this.state.open) return;
+    const h = Math.round(el.getBoundingClientRect().height);
+    if (h > 0 && Math.abs(h - this.state.deckH) > 2) this.setState({ deckH: h });
+  };
+
+  /* ---- alerts stream while the phone is open: the thread poll only wakes on thread changes,
+     so likes / mentions / news / Loop Bucks arrive on their own 7s cadence (30s in a background tab) ---- */
+  private _notifTimer: ReturnType<typeof setTimeout> | null = null;
+  private startNotifPolling = () => {
+    if (this._notifTimer) clearTimeout(this._notifTimer);
+    const tick = async () => {
+      if (!this._live) return;
+      if (document.visibilityState !== 'hidden') {
+        try { const r = await this.transport.notifications(); if (r && Array.isArray(r.items)) this.setState({ notifs: r.items.map(this.notification) }); }
+        catch { /* the next tick retries */ }
+      }
+      if (this._live) this._notifTimer = setTimeout(tick, document.visibilityState === 'hidden' ? 30000 : 7000);
+    };
+    this._notifTimer = setTimeout(tick, 7000);
+  };
+  private stopNotifPolling = () => { if (this._notifTimer) clearTimeout(this._notifTimer); this._notifTimer = null; };
+
   private _onParentMessage = (event: MessageEvent) => {
     if (event.source !== window.parent) return;
     const type = event.data && (event.data as { type?: string }).type;
@@ -815,7 +856,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     const activeThread = s.threads.find(thread => thread.id === s.activeThreadId);
     const activePerson = activeThread?.people?.[0];
     const vh = s.vh || 900;
-    const screen = Math.max(110, Math.min(s.slid ? 200 : 250, vh - (s.slid ? 460 : 200)));
+    const deckH = s.deckH || 264;
+    const screen = Math.max(110, Math.min(s.slid ? 200 : 250, vh - (s.slid ? deckH + 196 : 200)));
     const acc = ACCENT_OPTS.find(a => a.c === s.accent) || ACCENT_OPTS[0];
     const accentGrad = `linear-gradient(140deg,${acc.c},${acc.d})`;
     const bgOf = (key: string) => (BG_OPTS.find(b => b.key === key) || BG_OPTS[0]).bg(acc.c);
@@ -1120,11 +1162,12 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           <input ref={this._fileInput} type="file" accept="image/jpeg,image/png,image/gif,image/webp,audio/mpeg,audio/mp4,audio/ogg,audio/webm" onChange={event => void this.uploadFile(event)} style={{ display: 'none' }} />
                           <button onClick={this.chooseFile} disabled={s.uploading} title="Attach an image or audio file" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid #1e2831', background: '#0a1117', color: s.uploading ? '#5c6771' : acc.c, cursor: s.uploading ? 'wait' : 'pointer', flex: 'none' }}>{s.uploading ? '…' : '+'}</button>
                         </>}
-                        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 2, padding: '10px 13px', borderRadius: 13, background: '#0a1117', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.6)' }}>
-                          <span style={{ fontSize: 12, color: s.draft ? '#e8edf2' : '#4a545e', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {s.draft ? s.draft : (s.mode === 'room' ? 'Say something in the room…' : 'Type a message…')}
-                          </span>
-                          <span style={{ width: 1.5, height: 14, background: acc.c, flex: 'none', animation: 'caretBlink 1.1s infinite' }} />
+                        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'flex-end', padding: '9px 13px', borderRadius: 13, background: '#0a1117', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.6)' }}>
+                          <textarea ref={this.mountComposer} value={s.draft} rows={1} spellCheck
+                            placeholder={s.mode === 'room' ? 'Say something in the room…' : 'Type a message…'}
+                            onChange={e => { this.setState({ draft: e.target.value.slice(0, 4000) }); this.growComposer(e.target); }}
+                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); } }}
+                            style={{ flex: 1, minWidth: 0, display: 'block', border: 0, outline: 'none', resize: 'none', background: 'transparent', color: '#e8edf2', fontSize: 12, lineHeight: '17px', fontFamily: 'inherit', padding: 0, margin: 0, height: 17, maxHeight: 119, overflowY: 'auto', caretColor: acc.c, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} />
                         </div>
                         <div className="lk-send" onClick={() => this.send()} style={{ width: 40, height: 40, borderRadius: '50%', flex: 'none', cursor: 'pointer', background: accentGrad, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 4px 12px ${acc.c}44, inset 0 1px 0 rgba(255,255,255,.4)` }}>
                           <span style={{ width: 0, height: 0, borderLeft: `11px solid ${acc.fg}`, borderTop: '6.5px solid transparent', borderBottom: '6.5px solid transparent', marginLeft: 3 }} />

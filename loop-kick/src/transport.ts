@@ -81,6 +81,8 @@ export interface Transport {
   clearHistory(threadId: number): Promise<Record<string, unknown>>;
   search(query: string): Promise<Person[]>;
   updateNotification(input: { action: string; id?: string; category?: string; actor_id?: number }): Promise<{ items: SiteNotification[] }>;
+  /** the alert feed on its own (polled while the phone is open, so alerts stream without a thread change) */
+  notifications(): Promise<{ items: SiteNotification[]; counts?: Record<string, { total: number; unread: number }> }>;
   savePreferences(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   saveChirpSettings(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   upload(file: File, purpose?: 'image' | 'voice'): Promise<{ id: number; url: string; mime: string }>;
@@ -137,7 +139,7 @@ function mockTransport(): Transport {
     openThread: async () => thread, markRead: async () => thread, setFlags: async () => thread, respondRequest: async () => thread,
     clearHistory: async () => ({ deleted: 0 }),
     search: async q => person.name.toLowerCase().includes(q.toLowerCase()) ? [person] : [],
-    updateNotification: async () => ({ items: [] }), savePreferences: async input => input, saveChirpSettings: async input => input,
+    updateNotification: async () => ({ items: [] }), notifications: async () => ({ items: [] }), savePreferences: async input => input, saveChirpSettings: async input => input,
     upload: async file => ({ id: 1, url: URL.createObjectURL(file), mime: file.type }),
     chirpStart: async () => ({ id: 1, decision: 'live' }), chirpSignal: async () => ({}), chirpEnd: async () => ({}), chirpIncoming: async () => ({ incoming: [], missed: [] }),
     iceConfig: async () => ({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }),
@@ -207,7 +209,8 @@ function liveTransport(cfg: LoopKickConfig): Transport {
       }
       if ((data.changed || []).length) onRefresh?.();
     } catch { /* transient polls retry silently */ }
-    if (!stopped) timer = setTimeout(poll, 2600);
+    /* 2s while the tab is on screen (each poll is one light request), 9s in the background */
+    if (!stopped) timer = setTimeout(poll, typeof document !== 'undefined' && document.visibilityState === 'hidden' ? 9000 : 2000);
   }
 
   return {
@@ -231,6 +234,7 @@ function liveTransport(cfg: LoopKickConfig): Transport {
     clearHistory: id => request(`/api/threads/${id}/messages`, { method: 'DELETE' }),
     search: async query => (await request<{ results: Person[] }>(`/api/search?query=${encodeURIComponent(query)}`)).results || [],
     updateNotification: input => request('/api/notifications', { method: 'POST', body: JSON.stringify(input) }),
+    notifications: () => request('/api/notifications'),
     savePreferences: input => request('/api/preferences', { method: 'POST', body: JSON.stringify(input) }),
     saveChirpSettings: input => request('/api/chirp/settings', { method: 'POST', body: JSON.stringify(input) }),
     upload: async (file, purpose = 'image') => { const form = new FormData(); form.append('file', file); form.append('purpose', purpose); return request('/api/upload', { method: 'POST', body: form }); },
