@@ -296,9 +296,13 @@ export function createLoopKickServer(options = {}) {
       } catch { /* BTC row degrades to em-dashes; stocks still serve */ }
     }
     for (const t of (data.tickers || [])) {
-      const last = t.lastTrade?.p ?? t.day?.c ?? t.prevDay?.c ?? null;
-      const chg = typeof t.todaysChange === 'number' ? t.todaysChange : null;
-      const pct = typeof t.todaysChangePerc === 'number' ? t.todaysChangePerc : null;
+      /* On a closed market (holidays) the provider sends 0 for lastTrade.p and day.c, not null: a 0 must never win.
+         Fall through to the previous close and report a flat day, so the tape shows real prices instead of $0.00. */
+      const pick = (...vals) => vals.find((v) => typeof v === 'number' && v > 0) ?? null;
+      const last = pick(t.lastTrade?.p, t.day?.c, t.prevDay?.c);
+      const closed = last != null && !(t.lastTrade?.p > 0) && !(t.day?.c > 0);
+      const chg = closed ? 0 : (typeof t.todaysChange === 'number' ? t.todaysChange : null);
+      const pct = closed ? 0 : (typeof t.todaysChangePerc === 'number' ? t.todaysChangePerc : null);
       quotes[t.ticker] = {
         sym: t.ticker,
         last: last == null ? null : Math.round(last * 100) / 100,
