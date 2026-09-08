@@ -7,7 +7,7 @@
  * the rendered device matches the approved design.
  */
 import React from 'react';
-import { BootstrapData, createTransport, fetchWatch, Person, SiteNotification, ThreadSummary, Transport, WatchData, WatchItem, WireMessage } from './transport';
+import { BootstrapData, createTransport, fetchWatch, FeedPost, Person, SiteNotification, ThreadSummary, Transport, WatchData, WatchItem, WireMessage } from './transport';
 import { LiveChirpClient } from './liveChirp';
 import { CallClient, offerIsCall } from './call';
 import { TickerRoomClient, RoomInfo, TickerRoomPhase } from './tickerRoom';
@@ -186,6 +186,11 @@ interface State {
   fit: number;                   /* last resort: the whole device scales down (bottom-right anchored) when its measured height exceeds the frame */
   typingNames: string[];         /* who is typing in the open conversation right now */
   callMenu: boolean;             /* the Call button's Voice / Video / Chirp choices */
+  post: FeedPost | null;         /* a feed post opened from an alert, shown inside the phone */
+  postItem: string;              /* which item is loading / open */
+  postBusy: string;              /* 'load' | 'like' | 'comment' | 'share' | '' */
+  postReply: string;             /* the reply being written */
+  postNote: string;              /* short feedback line (e.g. 'Link copied') */
 }
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
@@ -217,6 +222,11 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     fit: 1,
     typingNames: [],
     callMenu: false,
+    post: null,
+    postItem: '',
+    postBusy: '',
+    postReply: '',
+    postNote: '',
     callSec: 0,
     muted: false,
     camOff: false,
@@ -644,6 +654,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   };
   /* ---- composer (owner call 2026-09-07): a real textarea that grows as you write (up to 7 lines) ---- */
   private _composer: HTMLTextAreaElement | null = null;
+  private _postReplyEl: HTMLTextAreaElement | null = null;
   private mountComposer = (el: HTMLTextAreaElement | null) => { this._composer = el; if (el) this.growComposer(el); };
   private growComposer = (el: HTMLTextAreaElement) => {
     el.style.height = 'auto';
@@ -804,7 +815,32 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       if (item.actor?.id) { try { const thread = await this.transport.openThread(item.actor.id); if (thread?.id) await this.openThread(thread); } catch { /* the messages tab is already showing */ } }
       return;
     }
+    const focus = /[?&]focus=([A-Za-z0-9._:-]+)/.exec(item.link || '');
+    if (focus) { void this.openPost(decodeURIComponent(focus[1])); return; }   /* the post opens right here (owner call 2026-09-08) */
     if (item.link) window.open(item.link, '_top');
+  };
+
+  /* ---------------- a feed post inside the phone ---------------- */
+  private openPost = async (item: string) => {
+    this.setState({ tab: 'notifs', postItem: item, post: null, postBusy: 'load', postReply: '', postNote: '' });
+    try { const post = await this.transport.post(item); if (this.state.postItem === item) this.setState({ post, postBusy: '' }); }
+    catch (e) { this.setState({ postBusy: '', postNote: (e as Error).message || 'Could not load that post.' }); }
+  };
+  private closePost = () => this.setState({ post: null, postItem: '', postBusy: '', postReply: '', postNote: '' });
+  private postAct = async (action: 'like' | 'comment' | 'share', extra: { text?: string; platform?: string } = {}) => {
+    const post = this.state.post; if (!post || this.state.postBusy) return;
+    this.setState({ postBusy: action, postNote: '' });
+    try {
+      const next = await this.transport.postAction(post.item, action, extra);
+      this.setState({ post: next, postBusy: '', postReply: action === 'comment' ? '' : this.state.postReply, postNote: action === 'comment' ? 'Reply posted' : (action === 'share' ? 'Shared · link copied' : '') });
+    } catch (e) { this.setState({ postBusy: '', postNote: (e as Error).message || 'That did not go through.' }); }
+  };
+  private sharePost = async () => {
+    const post = this.state.post; if (!post) return;
+    const text = post.author.name + ' posted on Stockmarketloop.com ' + post.url;
+    try { await navigator.clipboard.writeText(text); } catch { /* clipboard blocked: the note still shows the link was shared */ }
+    if ((navigator as any).share) { try { await (navigator as any).share({ title: post.author.name + ' on Stock Market Loop', text: post.text.slice(0, 120), url: post.url }); } catch { /* dismissed */ } }
+    await this.postAct('share', { platform: 'loopkick' });
   };
 
   /* Follow back from a follow alert (server side: sml-notify handles action=follow_back on the hub route). */
@@ -1127,7 +1163,69 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                         </div>
                       )}
 
-                      {s.tab === 'notifs' && (
+                      {s.tab === 'notifs' && (s.post || s.postItem) && (() => {
+                        const post = s.post; const busy = s.postBusy;
+                        const stamp = (d?: string) => d ? new Date(d).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+                        const pill = (label: string, on: boolean, click: () => void, disabled = false) => (
+                          <button key={label} type="button" onClick={click} disabled={disabled}
+                            style={{ flex: 1, border: on ? 'none' : '1px solid rgba(255,255,255,.12)', borderRadius: 999, padding: '7px 8px', fontSize: 10, fontWeight: 800, cursor: disabled ? 'default' : 'pointer', background: on ? acc.c : '#0e1721', color: on ? acc.fg : '#cfe4f7', opacity: disabled ? .6 : 1 }}>{label}</button>
+                        );
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <button type="button" onClick={this.closePost} style={{ border: 0, borderRadius: 8, padding: '5px 9px', background: '#111a23', color: '#cfe4f7', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>‹ Alerts</button>
+                              <span style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: '#5c6771' }}>{post ? (post.kind === 'article' ? 'ARTICLE' : 'POST') : 'LOADING'}</span>
+                              {post && <a href={post.pageUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto', fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, textDecoration: 'none' }}>OPEN ON SITE →</a>}
+                            </div>
+                            {!post && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 14 }}>{busy === 'load' ? 'Loading the post…' : (s.postNote || 'Nothing here.')}</div>}
+                            {post && (
+                              <div style={{ borderRadius: 13, padding: '10px 12px', background: 'linear-gradient(160deg,#0b1620 0%,#081018 100%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  {post.author.avatar
+                                    ? <img src={post.author.avatar} alt="" referrerPolicy="no-referrer" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flex: 'none', boxShadow: '0 0 0 1.5px rgba(93,185,255,.7)' }} />
+                                    : <span style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', background: '#17242a', color: acc.c, fontWeight: 800, flex: 'none' }}>{(post.author.name || '?').slice(0, 1)}</span>}
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontSize: 11.5, fontWeight: 700, color: '#5db9ff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{post.author.name}</div>
+                                    <div style={{ fontFamily: mono, fontSize: 8.5, color: '#4a545e' }}>{stamp(post.date)}</div>
+                                  </div>
+                                </div>
+                                {post.title && <div style={{ fontSize: 12.5, fontWeight: 800, color: '#e8edf2', marginTop: 8, lineHeight: 1.35 }}>{post.title}</div>}
+                                <div style={{ fontSize: 11.5, color: '#dbe4ec', lineHeight: 1.5, marginTop: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{customEmojiText(post.text)}</div>
+                                <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                                  {pill((post.liked ? '♥ Liked' : '♡ Like') + ' ' + post.likes, post.liked, () => void this.postAct('like'), !!busy)}
+                                  {pill('Comment ' + post.comments, false, () => { const el = this._postReplyEl; if (el) el.focus(); }, false)}
+                                  {pill('Share ' + post.shares, false, () => void this.sharePost(), !!busy)}
+                                </div>
+                                {s.postNote && <div style={{ fontFamily: mono, fontSize: 8.5, color: acc.c, marginTop: 6 }}>{s.postNote}</div>}
+                              </div>
+                            )}
+                            {post && post.recent.length > 0 && (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 120, overflowY: 'auto' }}>
+                                {post.recent.map(c => (
+                                  <div key={c.id} style={{ display: 'flex', gap: 7, padding: '6px 9px', borderRadius: 10, background: '#070d13' }}>
+                                    {c.avatar ? <img src={c.avatar} alt="" referrerPolicy="no-referrer" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', flex: 'none' }} /> : <span style={{ width: 20, height: 20, borderRadius: '50%', background: '#17242a', flex: 'none' }} />}
+                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                      <div style={{ fontSize: 10, fontWeight: 700, color: c.mine ? acc.c : '#c3ccd4' }}>{c.name} <span style={{ fontFamily: mono, fontSize: 8, color: '#4a545e', fontWeight: 400 }}>{stamp(c.date)}</span></div>
+                                      <div style={{ fontSize: 10.5, color: '#dbe4ec', lineHeight: 1.4, wordBreak: 'break-word' }}>{c.text}</div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {post && (
+                              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+                                <textarea ref={el => { this._postReplyEl = el; }} value={s.postReply} rows={1} placeholder={'Reply to ' + post.author.name + '…'}
+                                  onChange={e => this.setState({ postReply: e.target.value.slice(0, 1000) })}
+                                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const text = s.postReply.trim(); if (text) void this.postAct('comment', { text }); } }}
+                                  style={{ flex: 1, minWidth: 0, border: '1px solid #1e2831', borderRadius: 11, padding: '8px 10px', background: '#0a1117', color: '#e8edf2', fontSize: 11, lineHeight: '16px', fontFamily: 'inherit', resize: 'none', outline: 'none', maxHeight: 80 }} />
+                                <button type="button" disabled={!s.postReply.trim() || !!busy} onClick={() => { const text = s.postReply.trim(); if (text) void this.postAct('comment', { text }); }}
+                                  style={{ border: 0, borderRadius: 999, padding: '8px 12px', fontSize: 10, fontWeight: 800, cursor: 'pointer', background: acc.c, color: acc.fg, opacity: !s.postReply.trim() || busy ? .5 : 1 }}>{busy === 'comment' ? '…' : 'Reply'}</button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      {s.tab === 'notifs' && !s.post && !s.postItem && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                           {s.notifs.length > 0 && (
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, padding: '0 2px 2px' }}>
@@ -1152,7 +1250,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               <div style={{ minWidth: 0, flex: 1 }}>
                                 <div style={{ fontSize: 11.5, fontWeight: 600, color: n.actor ? '#5db9ff' : '#e8edf2', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.title}</div>
                                 <div style={{ fontSize: 11, color: '#7e8a96', lineHeight: 1.45 }}>{n.text}</div>
-                                {(n.link || n.type === 'dm') && <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, marginTop: 4 }}>{n.type === 'dm' ? 'OPEN MESSAGE →' : n.type === 'live' ? 'WATCH LIVE →' : n.type === 'video' ? 'WATCH →' : n.type === 'follow' ? 'VIEW PROFILE →' : n.type === 'news' ? 'READ ON THE LOOP →' : n.type === 'mention' ? 'SEE WHERE YOU WERE TAGGED →' : (n.type === 'loop_bucks' || n.type === 'gift') ? 'OPEN WALLET →' : 'VIEW POST →'}</div>}
+                                {(n.link || n.type === 'dm') && <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, marginTop: 4 }}>{n.type === 'dm' ? 'OPEN MESSAGE →' : n.type === 'live' ? 'WATCH LIVE →' : n.type === 'video' ? 'WATCH →' : n.type === 'follow' ? 'VIEW PROFILE →' : n.type === 'news' ? 'READ ON THE LOOP →' : n.type === 'mention' ? 'OPEN THE POST →' : (n.type === 'loop_bucks' || n.type === 'gift') ? 'OPEN WALLET →' : 'VIEW POST →'}</div>}
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginLeft: 'auto', flex: 'none' }}>
                                 <div style={{ fontFamily: mono, fontSize: 8.5, color: '#4a545e' }}>{n.time}</div>

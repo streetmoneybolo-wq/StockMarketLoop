@@ -101,6 +101,9 @@ export interface Transport {
   tickerRoomSignal(symbol: string, toUserId: number, type: string, payload: any): Promise<any>;
   /** tell the other side we are (or stopped) typing in a thread */
   typing(threadId: number, on: boolean): Promise<unknown>;
+  /** a feed post by item id (stream-*, chart-*, wp-*) and the actions on it */
+  post(item: string): Promise<FeedPost>;
+  postAction(item: string, action: 'like' | 'comment' | 'share', extra?: { text?: string; platform?: string }): Promise<FeedPost>;
   connect(onMessage: (m: WireMessage) => void, onRefresh?: () => void, onTyping?: (names: string[]) => void): void;
   disconnect(): void;
 }
@@ -153,6 +156,8 @@ function mockTransport(): Transport {
     tickerRoomSignals: async () => ({ signals: [], server_time: Date.now() }),
     tickerRoomSignal: async () => ({ ok: true }),
     typing: async () => ({}),
+    post: async item => ({ item, kind: 'stream', text: 'Demo post', url: '#', pageUrl: '#', author: { id: 1, name: 'Demo' }, likes: 0, comments: 0, shares: 0, liked: false, recent: [] }),
+    postAction: async item => ({ item, kind: 'stream', text: 'Demo post', url: '#', pageUrl: '#', author: { id: 1, name: 'Demo' }, likes: 1, comments: 0, shares: 0, liked: true, recent: [] }),
     connect: cb => { callback = cb; void callback; }, disconnect: () => { callback = null; },
   };
 }
@@ -259,6 +264,8 @@ function liveTransport(cfg: LoopKickConfig): Transport {
     tickerRoomSignals: (symbol, after) => request(`/api/ticker-room/signals?symbol=${encodeURIComponent(symbol)}&after=${Number(after) || 0}`),
     tickerRoomSignal: (symbol, toUserId, type, payload) => request('/api/ticker-room/signals', { method: 'POST', body: JSON.stringify({ symbol, to_user_id: toUserId, type, payload }) }),
     typing: (threadId, on) => request('/api/typing', { method: 'POST', body: JSON.stringify({ thread_id: threadId, typing: on }) }),
+    post: item => request('/api/post?item=' + encodeURIComponent(item)),
+    postAction: (item, action, extra = {}) => request('/api/post/action', { method: 'POST', body: JSON.stringify({ item, action, ...extra }) }),
     connect: (messageCb, refreshCb, typingCb) => { onMessage = messageCb; onRefresh = refreshCb || null; onTyping = typingCb || null; stopped = false; void poll(); },
     disconnect: () => { stopped = true; if (timer) clearTimeout(timer); timer = null; onMessage = null; onRefresh = null; onTyping = null; },
   };
@@ -270,6 +277,22 @@ export function createTransport(): Transport {
 }
 
 /* ---------------- Watch deck data (Loop Channel videos + live streams) ---------------- */
+
+/* ---------------- a feed post opened inside the phone ---------------- */
+export interface FeedPostComment { id: string; name: string; avatar?: string; text: string; date?: string; mine?: boolean; }
+export interface FeedPost {
+  item: string;
+  kind: 'stream' | 'chart' | 'article' | string;
+  title?: string;
+  text: string;
+  date?: string;
+  url: string;          /* share link (with the fresh share token) */
+  pageUrl: string;      /* where the post lives on the site */
+  author: { id: number; name: string; avatar?: string; handle?: string };
+  likes: number; comments: number; shares: number;
+  liked: boolean;
+  recent: FeedPostComment[];
+}
 
 export interface WatchItem {
   kind: 'vod' | 'live';

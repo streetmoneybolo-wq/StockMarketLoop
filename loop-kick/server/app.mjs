@@ -215,6 +215,9 @@ export function createLoopKickServer(options = {}) {
   app.delete('/api/messages/:id', (req, res) => proxy(req, res, 'DELETE', `/sml-loop/v1/messages/${Number(req.params.id)}`));
   app.get('/api/poll', (req, res) => proxy(req, res, 'GET', '/sml-loop/v1/poll', req.query));
   app.post('/api/typing', (req, res) => proxy(req, res, 'POST', '/sml-loop-typing/v1/typing', req.body));   // "… is typing" (plugin sml-loop-typing)
+  // A feed post inside the phone: read it, then like / reply / share from there (plugin sml-share-cards, sml-loop-kick-post/v1)
+  app.get('/api/post', (req, res) => proxy(req, res, 'GET', '/sml-loop-kick-post/v1/post', req.query));
+  app.post('/api/post/action', (req, res) => proxy(req, res, 'POST', '/sml-loop-kick-post/v1/action', req.body));
   app.get('/api/people', (req, res) => proxy(req, res, 'GET', '/sml-mhub/v1/people'));
   app.get('/api/search', (req, res) => proxy(req, res, 'GET', '/sml-mhub/v1/search', req.query));
   app.get('/api/notifications', (req, res) => proxy(req, res, 'GET', '/sml-mhub/v1/notifications'));
