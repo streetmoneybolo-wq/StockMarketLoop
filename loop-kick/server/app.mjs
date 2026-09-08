@@ -304,8 +304,12 @@ export function createLoopKickServer(options = {}) {
       const pick = (...vals) => vals.find((v) => typeof v === 'number' && v > 0) ?? null;
       const last = pick(t.lastTrade?.p, t.day?.c, t.prevDay?.c);
       const closed = last != null && !(t.lastTrade?.p > 0) && !(t.day?.c > 0);
-      const chg = closed ? 0 : (typeof t.todaysChange === 'number' ? t.todaysChange : null);
-      const pct = closed ? 0 : (typeof t.todaysChangePerc === 'number' ? t.todaysChangePerc : null);
+      /* closed market: the provider's todaysChange is 0 (no session yet). Show the LAST session's move
+         (previous day open → close) instead of a flat 0.00%, so the tape never reads as broken overnight or on holidays. */
+      const po = Number(t.prevDay?.o) || 0, pcl = Number(t.prevDay?.c) || 0;
+      const prevMove = po > 0 && pcl > 0 ? { chg: pcl - po, pct: ((pcl - po) / po) * 100 } : { chg: 0, pct: 0 };
+      const chg = closed ? prevMove.chg : (typeof t.todaysChange === 'number' ? t.todaysChange : null);
+      const pct = closed ? prevMove.pct : (typeof t.todaysChangePerc === 'number' ? t.todaysChangePerc : null);
       quotes[t.ticker] = {
         sym: t.ticker,
         last: last == null ? null : Math.round(last * 100) / 100,
