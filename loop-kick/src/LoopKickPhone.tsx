@@ -137,7 +137,7 @@ interface RoomMsg { user: string; color: string; text: string; }
 interface State {
   open: boolean;
   slid: boolean;
-  tab: 'messages' | 'chirp' | 'notifs';
+  tab: 'messages' | 'chirp' | 'notifs' | 'friends';
   mode: 'compose' | 'watch' | 'room' | 'video' | 'voice' | 'style';
   accent: string;
   font: string;
@@ -768,6 +768,17 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     catch (error) { this.setState({ loading: false, sendError: (error as Error).message }); }
   };
 
+  /** owner call 2026-09-07: only friends (members who follow each other) can be messaged, Chirped or called */
+  private openPersonGated = (person: Person) => {
+    if (person.friend === false) { this.setState({ sendError: `Follow ${person.name} and have them follow you back. Then you are friends and can message, Chirp or call.` }); return; }
+    void this.openPerson(person);
+  };
+
+  private callFriend = async (person: Person, video = false) => {
+    await this.openPerson(person);
+    if (this.state.activeThreadId) this.startCall(video);
+  };
+
   private searchPeople = (value: string) => {
     this.setState({ search: value });
     if (this._searchTimer) clearTimeout(this._searchTimer);
@@ -1041,6 +1052,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                         { key: 'messages', label: 'Messages', badge: messageUnread },
                         { key: 'chirp', label: 'Chirp', badge: 0 },
                         { key: 'notifs', label: 'Alerts', badge: unread },
+                        { key: 'friends', label: 'Friends', badge: 0 },
                       ] as { key: State['tab']; label: string; badge: number }[]).map(t => (
                         <div key={t.key} onClick={() => { this.scrollBottom(); this.setState({ tab: t.key }); }}
                           style={{ flex: 1, textAlign: 'center', padding: '7px 0', fontSize: 11, fontWeight: 600, borderRadius: 9, cursor: 'pointer', color: s.tab === t.key ? acc.fg : '#7e8a96', background: s.tab === t.key ? acc.c : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, transition: 'background .18s, color .18s' }}>
@@ -1116,10 +1128,10 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                             <>
                               <input value={s.search} onChange={event => this.searchPeople(event.target.value)} placeholder="Search members…" aria-label="Search members" style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #1e2831', borderRadius: 9, padding: '8px 10px', background: '#0a1117', color: '#e8edf2', outline: 'none', fontSize: 11 }} />
                               {(s.searchResults.length ? s.searchResults : s.people.filter(person => !person.presence?.stale).slice(0, 4)).map(person => (
-                                <button key={`person-${person.userId}`} onClick={() => void this.openPerson(person)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', border: 0, borderRadius: 10, background: '#0a1117', color: '#e8edf2', padding: '7px 9px', cursor: 'pointer', textAlign: 'left' }}>
+                                <button key={`person-${person.userId}`} onClick={() => this.openPersonGated(person)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', border: 0, borderRadius: 10, background: '#0a1117', color: '#e8edf2', padding: '7px 9px', cursor: 'pointer', textAlign: 'left' }}>
                                   {person.avatar ? <img src={person.avatar} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} /> : <span style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', background: '#17242a', color: acc.c }}>{person.name.slice(0, 1)}</span>}
                                   <span style={{ minWidth: 0, flex: 1 }}><strong style={{ display: 'block', fontSize: 11 }}>{person.name}</strong><small style={{ color: '#7e8a96' }}>@{person.handle}</small></span>
-                                  <span style={{ color: person.presence?.stale ? '#4a545e' : acc.c, fontSize: 9 }}>{person.presence?.stale ? '' : '● live'}</span>
+                                  <span style={{ color: person.presence?.stale ? '#4a545e' : acc.c, fontSize: 9 }}>{person.friend === false ? 'not friends' : (person.presence?.stale ? '' : '● live')}</span>
                                 </button>
                               ))}
                               <div style={{ fontFamily: mono, fontSize: 8, color: '#5c6771', letterSpacing: 1, paddingTop: 3 }}>CONVERSATIONS</div>
@@ -1160,6 +1172,31 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                             </div>
                           ))}
                           {!s.people.length && CHIRPS.slice(0, 1).map(c => <div key={c.user} style={{ color: '#7e8a96', fontSize: 10 }}>Your mutual friends will appear here when Chirp is enabled.</div>)}
+                        </div>
+                      )}
+
+                      {s.tab === 'friends' && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <div style={{ color: '#98a3ad', fontSize: 10.5, lineHeight: 1.45 }}>Friends are members you follow who follow you back. Only friends can message, Chirp or call each other.</div>
+                          {s.sendError && <div style={{ fontSize: 10, color: '#ff5c7a', textAlign: 'center', padding: '2px 0' }}>{s.sendError}</div>}
+                          {s.people.map(person => {
+                            const live = !!person.presence && !person.presence.stale && person.presence.state !== 'offline';
+                            return (
+                              <div key={`friend-${person.userId}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 9px', borderRadius: 11, background: '#0a1117' }}>
+                                <a href={person.profileUrl || '#'} target="_top" title={`Open ${person.name}'s profile`} style={{ position: 'relative', flex: 'none', display: 'block', width: 32, height: 32 }}>
+                                  {person.avatar ? <img src={person.avatar} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', display: 'block' }} /> : <span style={{ width: 32, height: 32, borderRadius: '50%', background: '#1c2730', display: 'grid', placeItems: 'center', fontSize: 11, color: '#c3ccd4' }}>{(person.name || '?').slice(0, 1).toUpperCase()}</span>}
+                                  {live && <i style={{ position: 'absolute', right: -1, bottom: -1, width: 10, height: 10, borderRadius: '50%', background: acc.c, border: '2px solid #0a1117' }} />}
+                                </a>
+                                <span style={{ flex: 1, minWidth: 0 }}>
+                                  <strong style={{ display: 'block', color: '#e8edf2', fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person.name}</strong>
+                                  <small style={{ color: live ? acc.c : '#7e8a96', fontSize: 9.5 }}>@{person.handle}{live ? ' · live' : ''}</small>
+                                </span>
+                                <button type="button" onClick={() => void this.openPerson(person)} title={`Message ${person.name}`} style={{ border: 0, borderRadius: 8, padding: '6px 9px', background: 'linear-gradient(140deg,#00e07a,#009c55)', color: '#06120c', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>Message</button>
+                                <button type="button" onClick={() => void this.callFriend(person, false)} title={`Voice call ${person.name}`} aria-label={`Voice call ${person.name}`} style={{ border: 0, borderRadius: 8, padding: '6px 8px', background: '#17242a', color: '#c3ccd4', fontSize: 11, cursor: 'pointer' }}>☏</button>
+                              </div>
+                            );
+                          })}
+                          {!s.people.length && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 12 }}>No friends yet. When you and another member follow each other you become friends and they show up here.</div>}
                         </div>
                       )}
 
