@@ -481,6 +481,45 @@ export function createLoopKickServer(options = {}) {
     return res.json({ available: true, query: q, count: rows.length, results: rows, source: 'render-universe' });
   });
 
+  // ---- scanner rows: the WP /sml-scanner/v1/quotes row contract straight from the Massive snapshot (fast lane) ----
+  const scannerCache = new Map(); // symbolSet -> { at, body }
+  app.get('/api/scanner-quotes', async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store');
+    if (!MASSIVE_KEY) return res.json({ available: false, reason: 'no-key', rows: [] });
+    const syms = String(req.query.symbols || '').toUpperCase().replace(/[^A-Z0-9,.\-]/g, '').split(',').filter(Boolean).slice(0, 60);
+    if (!syms.length) return res.json({ available: false, rows: [] });
+    const key = syms.join(',');
+    const now = Date.now();
+    const hit = scannerCache.get(key);
+    if (hit && now - hit.at < 10000) return res.json(hit.body);
+    try {
+      const url = `${MASSIVE_BASE}/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${encodeURIComponent(key)}&include_otc=true`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(6000) });
+      if (!r.ok) throw new Error(`massive ${r.status}`);
+      const data = await r.json();
+      const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+      const pos = (...vals) => vals.find((v) => typeof v === 'number' && v > 0) ?? null;
+      const rows = (data.tickers || []).map((t) => {
+        const day = t.day || {}, prev = t.prevDay || {}, lt = t.lastTrade || {}, lq = t.lastQuote || {};
+        const last = pos(lt.p, day.c, prev.c);
+        const pc = pos(prev.c);
+        const dayClose = pos(day.c);
+        const chg = last != null && pc ? last - pc : num(t.todaysChange);
+        const chgPct = last != null && pc ? ((last - pc) / pc) * 100 : num(t.todaysChangePerc);
+        const postPct = last != null && dayClose && lt.p > 0 && Math.abs(lt.p - dayClose) > 1e-9 ? ((lt.p - dayClose) / dayClose) * 100 : null;
+        return { sym: t.ticker, last, ltime: num(lt.t), chg, chgPct, o: num(day.o), h: num(day.h), l: num(day.l), c: dayClose, v: num(day.v), mo: num(day.vw), pc, pv: num(prev.v), bid: num(lq.p), bs: num(lq.s), ask: num(lq.P), as: num(lq.S), postPct, quality: 'verified_snapshot' };
+      }).filter((row) => row.sym && row.last != null);
+      const body = { available: rows.length > 0, rows, asof: now, source: 'render-massive-snapshot' };
+      if (scannerCache.size > 300) scannerCache.delete(scannerCache.keys().next().value);
+      scannerCache.set(key, { at: now, body });
+      return res.json(body);
+    } catch {
+      if (hit && now - hit.at < 60000) return res.json({ ...hit.body, stale: true });
+      return res.json({ available: false, reason: 'upstream-error', rows: [] });
+    }
+  });
+
   app.get('/api/quotes', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'no-store');
