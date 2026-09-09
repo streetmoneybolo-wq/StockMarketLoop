@@ -443,13 +443,17 @@ export function createLoopKickServer(options = {}) {
     const exch = x.e || '';
     return { symbol: x.s, code: `US.${x.s}`, name: x.n, exchange: exch, type: x.t, source: 'StockMarketLoop market directory', verified: true, tradable: true, message: 'Verified active U.S. market listing.', tradingview_symbol: `${exch === 'NYSE ARCA' ? 'AMEX' : exch.replace(/\s.*$/, '')}:${x.s}`, terminal_url: `https://stockmarketloop.com/stock-chart/?symbol=${encodeURIComponent(x.s)}&exchange=${encodeURIComponent(exch)}`, community_url: `https://stockmarketloop.com/stock-chart/?symbol=${encodeURIComponent(x.s)}`, has_moomoo_community_id: false };
   }
+  const POPULAR_SYMS = 'SPY QQQ NVDA AAPL TSLA MSFT AMD META AMZN GOOGL GOOG NFLX COIN AVGO SMCI PLTR SOFI RIVN MSTR INTC MU CRM ORCL ADBE UBER ABNB SHOP PYPL HOOD DKNG BA CAT DIS NKE SBUX MCD WMT COST TGT HD JPM BAC WFC GS MS V MA XOM CVX OXY COP PFE MRNA JNJ LLY UNH ABBV AMGN T VZ TMUS F GM NIO LCID CCL AAL UAL DAL MARA RIOT CLSK GME AMC SOUN BBAI IONQ RGTI QUBT ARM SNOW NET DDOG CRWD PANW ROKU SPOT IWM DIA VXX TQQQ SQQQ SOXL SOXS UVXY TLT GLD SLV USO XLF XLE XLK ARKK BRK.B TSM BABA JD PDD BIDU NVO ASML LMT RTX NOC GE HON IBM CSCO QCOM TXN AMAT LRCX KLAC MRVL ON MCHP ADI ANET DELL HPQ WDC STX SNDK'.split(' ');
+  const POP_RANK = new Map(POPULAR_SYMS.map((s, i) => [s, i + 1]));
   function searchUniverse(q, type, limit) {
     q = String(q || '').trim().toUpperCase(); const out = []; const seen = new Set();
     const want = (x) => type === 'all' || !type || (/^etfs?$/.test(type) ? x.t === 'ETF' : /^stocks?$/.test(type) ? x.t !== 'ETF' : true);
     const push = (x) => { if (!seen.has(x.s) && want(x)) { seen.add(x.s); out.push(x); } };
     if (!q) { for (const x of universe) { push(x); if (out.length >= limit) break; } return out; }
     for (const x of universe) { if (x.s === q) push(x); }
-    for (const x of universe) { if (out.length >= limit) break; if (x.s.startsWith(q)) push(x); }
+    // well-known names first among prefix matches (NV → NVDA before NVA), then alphabetical
+    const pre = universe.filter((x) => x.s !== q && x.s.startsWith(q)).sort((a, b) => (POP_RANK.get(a.s) || 9999) - (POP_RANK.get(b.s) || 9999) || (a.s < b.s ? -1 : a.s > b.s ? 1 : 0));
+    for (const x of pre) { if (out.length >= limit) break; push(x); }
     const ql = q.toLowerCase();
     for (const x of universe) { if (out.length >= limit) break; if (x.n.toLowerCase().startsWith(ql)) push(x); }
     for (const x of universe) { if (out.length >= limit) break; if (x.s.includes(q) || x.n.toLowerCase().includes(ql)) push(x); }
