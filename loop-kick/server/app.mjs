@@ -329,6 +329,45 @@ export function createLoopKickServer(options = {}) {
     return body;
   }
 
+  // ---- history bars: the Analyst Dashboard's fast lane (owner call 2026-09-09) ----
+  // Same provider, same timeframe table and same response shape as the WordPress /sml/v1/history route, minus the
+  // ~2s WordPress bootstrap. 20s cache for intraday, 30min for daily+; a failed upstream serves the last copy as stale.
+  const HISTORY_TF = { '1m': [1, 'minute', 5], '3m': [3, 'minute', 10], '5m': [5, 'minute', 15], '10m': [10, 'minute', 30], '15m': [15, 'minute', 45], '30m': [30, 'minute', 90], '1h': [1, 'hour', 180], '2h': [2, 'hour', 365], '4h': [4, 'hour', 730], '1D': [1, 'day', 1825], '1W': [1, 'week', 3650], '1M': [1, 'month', 7300], '1Q': [1, 'quarter', 18250] };
+  const historyCache = new Map(); // 'SYM|tf' -> { at, body }
+  app.get('/api/history', async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store');
+    const sym = String(req.query.symbol || '').toUpperCase().replace(/[^A-Z0-9.\-]/g, '').slice(0, 15);
+    const tf = String(req.query.tf || '15m');
+    const cfg = HISTORY_TF[tf];
+    if (!sym || !cfg) return res.status(400).json({ ok: false, reason: 'bad-request', bars: [] });
+    if (!MASSIVE_KEY) return res.status(404).json({ ok: false, reason: 'no-key', bars: [] });
+    const key = `${sym}|${tf}`;
+    const now = Date.now();
+    const ttl = ['1D', '1W', '1M', '1Q'].includes(tf) ? 30 * 60 * 1000 : 20 * 1000;
+    const hit = historyCache.get(key);
+    if (hit && now - hit.at < ttl) return res.json(hit.body);
+    const day = 86400000;
+    const to = new Date(now).toISOString().slice(0, 10);
+    const from = new Date(now - cfg[2] * day).toISOString().slice(0, 10);
+    try {
+      const url = `${MASSIVE_BASE}/v2/aggs/ticker/${encodeURIComponent(sym)}/range/${cfg[0]}/${cfg[1]}/${from}/${to}?adjusted=true&sort=asc&limit=50000`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(12000) });
+      if (!r.ok) throw new Error(`massive ${r.status}`);
+      const j = await r.json();
+      const bars = (Array.isArray(j.results) ? j.results : [])
+        .filter((b) => Number.isFinite(b.t) && Number.isFinite(b.c))
+        .map((b) => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, vw: b.vw, n: b.n, source: 'massive-rest', quality: 'authoritative' }));
+      const body = { ok: true, bars, symbol: sym, tf, source: 'massive-rest', quality: 'authoritative', asOf: now, resultCount: bars.length };
+      if (historyCache.size > 500) historyCache.delete(historyCache.keys().next().value);
+      historyCache.set(key, { at: now, body });
+      return res.json(body);
+    } catch {
+      if (hit) return res.json({ ...hit.body, stale: true });
+      return res.status(502).json({ ok: false, reason: 'upstream-error', bars: [] });
+    }
+  });
+
   app.get('/api/quotes', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'no-store');
