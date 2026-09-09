@@ -445,7 +445,7 @@ export function createLoopKickServer(options = {}) {
   }
   function searchUniverse(q, type, limit) {
     q = String(q || '').trim().toUpperCase(); const out = []; const seen = new Set();
-    const want = (x) => type === 'all' || !type || (type === 'etf' ? x.t === 'ETF' : type === 'stock' ? x.t !== 'ETF' : true);
+    const want = (x) => type === 'all' || !type || (/^etfs?$/.test(type) ? x.t === 'ETF' : /^stocks?$/.test(type) ? x.t !== 'ETF' : true);
     const push = (x) => { if (!seen.has(x.s) && want(x)) { seen.add(x.s); out.push(x); } };
     if (!q) { for (const x of universe) { push(x); if (out.length >= limit) break; } return out; }
     for (const x of universe) { if (x.s === q) push(x); }
