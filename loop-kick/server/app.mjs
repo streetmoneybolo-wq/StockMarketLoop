@@ -368,6 +368,45 @@ export function createLoopKickServer(options = {}) {
     }
   });
 
+  // ---- generic bars for the dashboard chart (the WP /sml/v1/dash-bars contract: symbol, mult, unit, days) ----
+  const UNITS = new Set(['minute', 'hour', 'day', 'week', 'month']);
+  const barsCache = new Map(); // 'SYM|mult|unit|days' -> { at, body }
+  app.get('/api/bars', async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store');
+    const sym = String(req.query.symbol || '').toUpperCase().replace(/[^A-Z0-9.\-]/g, '').slice(0, 15);
+    const mult = Math.max(1, Math.min(60, parseInt(String(req.query.mult || '1'), 10) || 1));
+    const unit = String(req.query.unit || 'minute');
+    const days = Math.max(1, Math.min(3650, parseInt(String(req.query.days || '2'), 10) || 2));
+    if (!sym || !UNITS.has(unit)) return res.status(400).json({ available: false, reason: 'bad-request', bars: [] });
+    if (!MASSIVE_KEY) return res.status(404).json({ available: false, reason: 'no-key', bars: [] });
+    const key = `${sym}|${mult}|${unit}|${days}`;
+    const now = Date.now();
+    const ttl = unit === 'minute' || unit === 'hour' ? 20 * 1000 : 30 * 60 * 1000;
+    const hit = barsCache.get(key);
+    if (hit && now - hit.at < ttl) return res.json(hit.body);
+    const day = 86400000;
+    const to = new Date(now).toISOString().slice(0, 10);
+    const from = new Date(now - days * day).toISOString().slice(0, 10);
+    try {
+      const url = `${MASSIVE_BASE}/v2/aggs/ticker/${encodeURIComponent(sym)}/range/${mult}/${unit}/${from}/${to}?adjusted=true&sort=asc&limit=50000`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(12000) });
+      if (!r.ok) throw new Error(`massive ${r.status}`);
+      const j = await r.json();
+      const bars = (Array.isArray(j.results) ? j.results : [])
+        .filter((b) => Number.isFinite(b.t) && Number.isFinite(b.c))
+        .map((b) => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }));
+      const sessions = new Set(bars.map((b) => new Date(b.t).toISOString().slice(0, 10))).size;
+      const body = { available: bars.length > 0, bars, asof: now, source: 'massive-rest', session_count: sessions };
+      if (barsCache.size > 500) barsCache.delete(barsCache.keys().next().value);
+      barsCache.set(key, { at: now, body });
+      return res.json(body);
+    } catch {
+      if (hit) return res.json({ ...hit.body, stale: true });
+      return res.status(502).json({ available: false, reason: 'upstream-error', bars: [] });
+    }
+  });
+
   app.get('/api/quotes', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'no-store');
