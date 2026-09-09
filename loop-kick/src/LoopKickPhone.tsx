@@ -308,6 +308,16 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   };
   private _resize = () => { this.setState({ vh: window.innerHeight }); this.measureDeck(); };
 
+  /** Owner call 2026-09-09: the page's LOOP-KICK button must react the instant alerts change (Clear all → 0), not on its
+   *  next poll. Post the Alerts-tab unread count to the host page whenever the list changes. */
+  private publishNotifCount = () => {
+    if (window.parent === window) return;
+    let targetOrigin = '*';
+    try { if (document.referrer) targetOrigin = new URL(document.referrer).origin; } catch { targetOrigin = '*'; }
+    const unread = this.state.notifs.filter(n => n.unread).length;
+    try { window.parent.postMessage({ type: 'sml-loop-kick:notifications', version: 1, unread, total: this.state.notifs.length }, targetOrigin); } catch { /* host not listening */ }
+  };
+
   private publishEmbedSurface = () => {
     if (window.parent === window) return;
 
@@ -360,6 +370,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   componentDidUpdate(_previousProps: Props, previousState: State) {
     if (previousState.draft !== this.state.draft && this._composer) this.growComposer(this._composer);
+    if (previousState.notifs !== this.state.notifs) this.publishNotifCount();
     if (previousState.draft !== this.state.draft) this.noteTyping();
     this.measureDeck();
     this.fitDevice();
