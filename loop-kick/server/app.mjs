@@ -455,7 +455,8 @@ export function createLoopKickServer(options = {}) {
     const pre = universe.filter((x) => x.s !== q && x.s.startsWith(q)).sort((a, b) => (POP_RANK.get(a.s) || 9999) - (POP_RANK.get(b.s) || 9999) || (a.s < b.s ? -1 : a.s > b.s ? 1 : 0));
     for (const x of pre) { if (out.length >= limit) break; push(x); }
     const ql = q.toLowerCase();
-    for (const x of universe) { if (out.length >= limit) break; if (x.n.toLowerCase().startsWith(ql)) push(x); }
+    const np = universe.filter((x) => x.n.toLowerCase().startsWith(ql)).sort((a, b) => (POP_RANK.get(a.s) || 9999) - (POP_RANK.get(b.s) || 9999) || (a.s < b.s ? -1 : a.s > b.s ? 1 : 0));
+    for (const x of np) { if (out.length >= limit) break; push(x); }
     for (const x of universe) { if (out.length >= limit) break; if (x.s.includes(q) || x.n.toLowerCase().includes(ql)) push(x); }
     return out.slice(0, limit);
   }
