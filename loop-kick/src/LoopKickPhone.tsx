@@ -721,6 +721,9 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (event.source !== window.parent) return;
     const type = event.data && (event.data as { type?: string }).type;
     if (type === 'sml-loop-kick:open') {
+      // Owner call 2026-09-08: the phone's own X (or Escape) leaves the app closed and the page hides the popup;
+      // when the page opens the popup again the phone must come back up too, not stay folded behind the dock mask.
+      if (!this.state.open || !this.state.slid) this.setState({ open: true, slid: true });
       this.goLive();
       // The prewarmed frame reported its phone-shaped mask while the popup was hidden (0×0),
       // which the bridge rightly ignored. Report again now that we are visible, and once more
