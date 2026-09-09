@@ -407,6 +407,71 @@ export function createLoopKickServer(options = {}) {
     }
   });
 
+  // ---- symbol universe: instant ticker suggestions (owner call 2026-09-09) ----
+  // Every active US stock/ETF/ADR listing (Massive reference tickers, ~10k rows) is held in memory and refreshed daily.
+  // /api/symbols?q= answers a prefix search in ~1ms; /api/symbols/all ships the compact list so the page can answer
+  // suggestions locally with zero network. Shape mirrors the WP /sml/v1/symbol-directory results.
+  const EXCH = { XNYS: 'NYSE', XNAS: 'NASDAQ', ARCX: 'NYSE ARCA', BATS: 'CBOE', XASE: 'NYSE AMERICAN', XCBO: 'CBOE', IEXG: 'IEX', OTCM: 'OTC' };
+  const TYPE = { CS: 'STOCK', ETF: 'ETF', ADRC: 'ADR', ETN: 'ETN', ETV: 'ETF', PFD: 'PREFERRED', FUND: 'FUND', UNIT: 'UNIT', WARRANT: 'WARRANT', RIGHT: 'RIGHT', SP: 'SP', ETS: 'ETF', OS: 'STOCK', GDR: 'GDR', ADRP: 'ADR', ADRR: 'ADR' };
+  let universe = []; // [{ s, n, e, t }] sorted by symbol
+  let universeAt = 0, universeLoading = null;
+  async function loadUniverse() {
+    if (!MASSIVE_KEY) return;
+    if (universeLoading) return universeLoading;
+    universeLoading = (async () => {
+      const rows = [];
+      let url = `${MASSIVE_BASE}/v3/reference/tickers?market=stocks&active=true&limit=1000&sort=ticker&order=asc`;
+      for (let page = 0; page < 40 && url; page += 1) {
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${MASSIVE_KEY}` }, signal: AbortSignal.timeout(15000) });
+        if (!r.ok) throw new Error(`massive ${r.status}`);
+        const j = await r.json();
+        for (const t of (j.results || [])) {
+          if (!t.ticker || !/^[A-Z0-9.\-]{1,10}$/.test(t.ticker)) continue;
+          rows.push({ s: t.ticker, n: String(t.name || '').slice(0, 80), e: EXCH[t.primary_exchange] || (t.primary_exchange || ''), t: TYPE[t.type] || (t.type || 'STOCK') });
+        }
+        url = j.next_url ? (j.next_url.includes('apiKey=') ? j.next_url : j.next_url) : '';
+      }
+      if (rows.length > 1000) { rows.sort((a, b) => (a.s < b.s ? -1 : a.s > b.s ? 1 : 0)); universe = rows; universeAt = Date.now(); }
+    })().catch(() => {}).finally(() => { universeLoading = null; });
+    return universeLoading;
+  }
+  if (MASSIVE_KEY && options.symbolUniverse !== false) {
+    setTimeout(() => { loadUniverse(); }, 3000);
+    setInterval(() => { loadUniverse(); }, 24 * 60 * 60 * 1000).unref?.();
+  }
+  function symbolRow(x) {
+    const exch = x.e || '';
+    return { symbol: x.s, code: `US.${x.s}`, name: x.n, exchange: exch, type: x.t, source: 'StockMarketLoop market directory', verified: true, tradable: true, message: 'Verified active U.S. market listing.', tradingview_symbol: `${exch === 'NYSE ARCA' ? 'AMEX' : exch.replace(/\s.*$/, '')}:${x.s}`, terminal_url: `https://stockmarketloop.com/stock-chart/?symbol=${encodeURIComponent(x.s)}&exchange=${encodeURIComponent(exch)}`, community_url: `https://stockmarketloop.com/stock-chart/?symbol=${encodeURIComponent(x.s)}`, has_moomoo_community_id: false };
+  }
+  function searchUniverse(q, type, limit) {
+    q = String(q || '').trim().toUpperCase(); const out = []; const seen = new Set();
+    const want = (x) => type === 'all' || !type || (type === 'etf' ? x.t === 'ETF' : type === 'stock' ? x.t !== 'ETF' : true);
+    const push = (x) => { if (!seen.has(x.s) && want(x)) { seen.add(x.s); out.push(x); } };
+    if (!q) { for (const x of universe) { push(x); if (out.length >= limit) break; } return out; }
+    for (const x of universe) { if (x.s === q) push(x); }
+    for (const x of universe) { if (out.length >= limit) break; if (x.s.startsWith(q)) push(x); }
+    const ql = q.toLowerCase();
+    for (const x of universe) { if (out.length >= limit) break; if (x.n.toLowerCase().startsWith(ql)) push(x); }
+    for (const x of universe) { if (out.length >= limit) break; if (x.s.includes(q) || x.n.toLowerCase().includes(ql)) push(x); }
+    return out.slice(0, limit);
+  }
+  app.get('/api/symbols/all', (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    if (!universe.length) { res.set('Cache-Control', 'no-store'); return res.status(503).json({ ok: false, reason: universeLoading ? 'loading' : 'empty', at: universeAt }); }
+    res.set('Cache-Control', 'public, max-age=3600');
+    return res.json({ ok: true, at: universeAt, count: universe.length, rows: universe.map((x) => [x.s, x.n, x.e, x.t]) });
+  });
+  app.get('/api/symbols', (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'no-store');
+    if (!universe.length) return res.status(503).json({ available: false, reason: universeLoading ? 'loading' : 'empty', results: [] });
+    const q = String(req.query.q || '').replace(/[^A-Za-z0-9.\- &']/g, '').slice(0, 30);
+    const type = String(req.query.type || 'all').toLowerCase();
+    const limit = Math.max(1, Math.min(50, parseInt(String(req.query.limit || '12'), 10) || 12));
+    const rows = searchUniverse(q, type, limit).map(symbolRow);
+    return res.json({ available: true, query: q, count: rows.length, results: rows, source: 'render-universe' });
+  });
+
   app.get('/api/quotes', async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Cache-Control', 'no-store');
