@@ -417,6 +417,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
     /* ---- the existing StockMarketLoop messenger is the source of truth ---- */
     window.addEventListener('message', this._onParentMessage);
+    window.addEventListener('pointerdown', this.gkUnlock, true);
     /* any content change inside the device (a growing composer, an image finishing its load, a longer thread) re-checks the fit */
     if (typeof ResizeObserver !== 'undefined' && this._device.current) { this._deviceObserver = new ResizeObserver(() => this.fitDevice()); this._deviceObserver.observe(this._device.current); }
     const snap = readSnapshot();
@@ -461,6 +462,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     window.removeEventListener('keydown', this._key);
     window.removeEventListener('resize', this._resize);
     window.removeEventListener('message', this._onParentMessage);
+    window.removeEventListener('pointerdown', this.gkUnlock, true);
     if (this._deviceObserver) { this._deviceObserver.disconnect(); this._deviceObserver = null; }
     this.detachHls();
     if (this._watchTimer) clearTimeout(this._watchTimer);
@@ -733,6 +735,13 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   private _gkLast = 0;
   private _gkQueue: GroupChirp[] = [];
   private _gkAudio: HTMLAudioElement | null = null;
+  private _gkUnlocked = false;
+  /* phones refuse audio that was not started by a touch: one element is blessed by the first touch (silent clip) and reused for every chirp */
+  private gkPlayer = () => { if (!this._gkAudio) { this._gkAudio = new Audio(); this._gkAudio.preload = 'auto'; this._gkAudio.setAttribute('playsinline', ''); } return this._gkAudio; };
+  private gkUnlock = () => {
+    if (this._gkUnlocked) return; this._gkUnlocked = true;
+    try { const a = this.gkPlayer(); if (!this.state.gkPlaying) { a.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='; void a.play().catch(() => { this._gkUnlocked = false; }); } } catch { this._gkUnlocked = false; }
+  };
   private _gkRec: MediaRecorder | null = null;
   private _gkChunks: Blob[] = [];
   private _gkRecTimer: ReturnType<typeof setInterval> | null = null;
@@ -819,10 +828,10 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   private gkPlayNext = async () => {
     if (this.state.gkPlaying || !this._gkQueue.length) return;
     const c = this._gkQueue.shift() as GroupChirp;
-    const el = new Audio(c.url); el.preload = 'auto';
-    this._gkAudio = el;
-    const done = () => { this._gkAudio = null; this.setState({ gkPlaying: null, gkNeedTap: false }); void this.gkPlayNext(); };
+    const el = this.gkPlayer();
+    const done = () => { el.onended = null; el.onerror = null; this.setState({ gkPlaying: null, gkNeedTap: false }); void this.gkPlayNext(); };
     el.onended = done; el.onerror = done;
+    el.src = c.url;
     this.setState({ gkPlaying: c, gkNeedTap: false });
     try { await el.play(); } catch { this.setState({ gkNeedTap: true }); }
   };
@@ -1365,7 +1374,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                     onPointerUp={ev => { ev.preventDefault(); this.gkRecStop(); }} onPointerCancel={() => this.gkRecStop()}
                                     onKeyDown={ev => { if ((ev.key === ' ' || ev.key === 'Enter') && !ev.repeat) { ev.preventDefault(); ev.stopPropagation(); void this.gkRecStart(g); } }}
                                     onKeyUp={ev => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); this.gkRecStop(); } }}
-                                    onClick={ev => ev.preventDefault()} aria-label={`Hold to Chirp ${g.name}`}
+                                    onClick={ev => ev.preventDefault()} onContextMenu={ev => ev.preventDefault()} aria-label={`Hold to Chirp ${g.name}`}
                                     style={{ border: 0, borderRadius: 10, padding: '9px 10px', fontSize: 10.5, fontWeight: 700, cursor: 'pointer', background: rec ? '#ff3b5c' : sending ? '#17242a' : 'linear-gradient(140deg,#3d8bfd,#1f5fd0)', color: '#fff', userSelect: 'none', touchAction: 'none' }}>
                                     {rec ? `● Recording ${s.gkRecSec}s — release to send` : sending ? 'Sending…' : '🎙 Hold to Chirp the whole group'}
                                   </button>
