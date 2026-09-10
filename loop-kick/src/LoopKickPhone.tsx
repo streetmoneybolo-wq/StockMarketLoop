@@ -669,6 +669,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     void first.finally(() => { if (this._live) this.transport.connect(this.onIncoming, () => void this.refreshSummary(), names => { if (names.join('|') !== this.state.typingNames.join('|')) this.setState({ typingNames: names }); }); });
     if (this._chirpTick && !this._chirpTimer) this._chirpTimer = setInterval(this._chirpTick, 2800);
     this.startNotifPolling();
+    this.startChirpPolling();
     void this.loadGroups();
   };
   private pauseLive = () => {
@@ -725,18 +726,33 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       if (document.visibilityState !== 'hidden') {
         try { const r = await this.transport.notifications(); if (r && Array.isArray(r.items)) this.setState({ notifs: this.toNotifs(r.items) }); }
         catch { /* the next tick retries */ }
-        if (this.state.groups.some(g => g.chirp)) void this.gkPoll();
       }
-      if (this._live) this._notifTimer = setTimeout(tick, document.visibilityState === 'hidden' ? 30000 : (this.state.groups.some(g => g.chirp) ? 5000 : 7000));
+      if (this._live) this._notifTimer = setTimeout(tick, document.visibilityState === 'hidden' ? 30000 : 7000);
     };
     this._notifTimer = setTimeout(tick, 7000);
   };
-  private stopNotifPolling = () => { if (this._notifTimer) clearTimeout(this._notifTimer); this._notifTimer = null; };
+  private stopNotifPolling = () => { if (this._notifTimer) clearTimeout(this._notifTimer); this._notifTimer = null; this.stopChirpPolling(); };
+  /* group chirps: their own fast loop (2 s on screen, 8 s hidden) while any group has Chirp on — separate from the 7 s alert poll */
+  private _gkTimer: ReturnType<typeof setTimeout> | null = null;
+  private startChirpPolling = () => {
+    if (this._gkTimer) return;
+    const tick = async () => {
+      this._gkTimer = null;
+      if (!this._live) return;
+      if (this.state.groups.some(g => g.chirp)) { await this.gkPoll(); }
+      if (this._live) this._gkTimer = setTimeout(tick, document.visibilityState === 'hidden' ? 6000 : 1000);
+    };
+    this._gkTimer = setTimeout(tick, 1500);
+  };
+  private stopChirpPolling = () => { if (this._gkTimer) clearTimeout(this._gkTimer); this._gkTimer = null; };
 
   /* ---- Groups (owner call 2026-09-10): per-channel group alerts into this phone + group Chirp.
      Alerts ride the normal alert feed (the WP side fans them out); Chirp = hold-to-record → upload → sml-group-kick,
      listeners poll the feed with the alerts and play in order. ---- */
   private _gkLast = 0;
+  private _gkMe = 0;
+  private _gkSig: Record<number, number> = {};   /* per-group cursor for the signal files */
+  private _gkSigFails = 0;
   private _gkQueue: GroupChirp[] = [];
   private _gkAudio: HTMLAudioElement | null = null;
   private _gkUnlocked = false;
@@ -756,6 +772,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     try {
       const r = await this.transport.groups(withMembers);
       if (!this._gkLast) this._gkLast = Number(r.lastChirp) || 0;
+      if (r.me) this._gkMe = Number(r.me) || this._gkMe;
       this.setState(p => ({ groups: (r.groups || []).map(g => ({ ...g, members: g.members || p.groups.find(x => x.id === g.id)?.members })), groupsLoaded: true, groupsErr: '' }));
     } catch (e) { this.setState({ groupsLoaded: true, groupsErr: (e as Error).message || 'Could not load your groups' }); }
   };
@@ -797,9 +814,9 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (this._gkRec) return;
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') { this.setState({ groupsErr: 'This browser cannot record audio.' }); return; }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, sampleRate: 48000, channelCount: 1 } });
       const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find(m => MediaRecorder.isTypeSupported(m)) || '';
-      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 128000 } : { audioBitsPerSecond: 128000 });
       this._gkChunks = [];
       rec.ondataavailable = ev => { if (ev.data && ev.data.size) this._gkChunks.push(ev.data); };
       rec.onstop = () => { stream.getTracks().forEach(tr => tr.stop()); void this.gkRecDone(g, rec.mimeType || mime || 'audio/webm'); };
@@ -830,8 +847,35 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       this.gkNote(`🔊 Chirped ${g.name} · ${sec}s · everyone on the group page hears it now, ${r.listeners} member${r.listeners === 1 ? '' : 's'} listening elsewhere`);
     } catch (e) { this.setState({ groupsBusy: '', groupsErr: (e as Error).message || 'That chirp did not send' }); }
   };
+  /* the signal file: ~50 ms static fetch per group per second instead of a WordPress boot; falls back to the REST feed if it fails */
+  private gkWants = (g: KickGroup, c: GroupChirp) => {
+    const ch = g.chirpChannels || [], vo = g.chirpVoices || [];
+    if (ch.length && c.channelId && !ch.includes(Number(c.channelId))) return false;
+    if (vo.length && !vo.includes(Number(c.by?.id))) return false;
+    return true;
+  };
   private gkPoll = async () => {
     if (this.transport.name !== 'live') return;
+    const groups = this.state.groups.filter(g => g.chirp && g.signal);
+    if (groups.length && this._gkSigFails <= 3) {
+      await Promise.all(groups.map(async g => {
+        try {
+          const res = await fetch(`${g.signal}?v=${Date.now()}`, { cache: 'no-store', credentials: 'omit' });
+          if (!res.ok) { this._gkSigFails++; return; }
+          const j = await res.json() as { last: number; recent: GroupChirp[] };
+          this._gkSigFails = 0;
+          const l = Number(j.last) || 0;
+          const cur = this._gkSig[g.id];
+          if (cur === undefined) { this._gkSig[g.id] = l; return; }
+          if (l > cur) {
+            const items = (j.recent || []).filter(c => Number(c.id) > cur && Number(c.by?.id) !== this._gkMe && this.gkWants(g, c)).sort((a, b) => a.id - b.id);
+            this._gkSig[g.id] = l;
+            if (items.length) { this._gkQueue.push(...items); void this.gkPlayNext(); }
+          }
+        } catch { this._gkSigFails++; }
+      }));
+      return;
+    }
     try {
       const r = await this.transport.groupChirpFeed(this._gkLast);
       const last = Number(r.last) || 0;
@@ -845,7 +889,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     const el = this.gkPlayer();
     const done = () => { el.onended = null; el.onerror = null; this.setState({ gkPlaying: null, gkNeedTap: false }); void this.gkPlayNext(); };
     el.onended = done; el.onerror = done;
-    el.src = c.url;
+    el.src = c.url; el.load();
     this.setState({ gkPlaying: c, gkNeedTap: false });
     try { await el.play(); } catch { this.setState({ gkNeedTap: true }); }
   };

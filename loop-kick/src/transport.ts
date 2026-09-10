@@ -74,7 +74,7 @@ export interface KickGroupMember { id: number; name: string; handle: string; ava
 export interface KickGroup {
   id: number; name: string; slug: string; url: string; icon: string; role: string; isOwner: boolean; canManage: boolean; canChirp: boolean;
   alertsAll: boolean; chirp: boolean; channels: KickGroupChannel[]; chirpRule: { mode: string; users: number[] } | null; members?: KickGroupMember[];
-  chirpChannels?: number[]; chirpVoices?: number[]; voices?: KickGroupMember[];
+  chirpChannels?: number[]; chirpVoices?: number[]; voices?: KickGroupMember[]; signal?: string;
 }
 export interface GroupChirp { id: number; groupId: number; group: string; groupUrl: string; channelId: number; url: string; duration: number; at: string; by: { id: number; name: string; handle: string; avatar: string } }
 
@@ -115,7 +115,7 @@ export interface Transport {
   post(item: string): Promise<FeedPost>;
   postAction(item: string, action: 'like' | 'comment' | 'share', extra?: { text?: string; platform?: string }): Promise<FeedPost>;
   /* group alerts + group Chirp */
-  groups(withMembers?: boolean): Promise<{ groups: KickGroup[]; lastChirp: number; chirpOn: boolean }>;
+  groups(withMembers?: boolean): Promise<{ groups: KickGroup[]; me?: number; lastChirp: number; chirpOn: boolean }>;
   groupSub(input: { group_id: number; channel_id: number; alerts?: boolean; chirp?: boolean; chirp_channels?: number[]; chirp_voices?: number[] }): Promise<{ ok: boolean; group: KickGroup }>;
   groupChirp(input: { group_id: number; channel_id?: number; attachment_id: number; duration?: number }): Promise<{ ok: boolean; chirp: GroupChirp | null; listeners: number }>;
   groupChirpFeed(since: number): Promise<{ last: number; chirps: GroupChirp[]; on: boolean }>;
