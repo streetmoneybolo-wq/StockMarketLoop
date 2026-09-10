@@ -901,7 +901,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     el.onended = done; el.onerror = done;
     el.src = c.url; el.load();
     this.setState({ gkPlaying: c, gkNeedTap: false });
-    try { await el.play(); } catch { this.setState({ gkNeedTap: true }); }
+    try { await el.play(); } catch { this.setState({ gkNeedTap: true }); const h = () => { document.removeEventListener('pointerdown', h, true); this.gkTapPlay(); }; document.addEventListener('pointerdown', h, true); }
   };
   private gkTapPlay = () => { const el = this._gkAudio; if (!el) return; void el.play().then(() => this.setState({ gkNeedTap: false })).catch(() => {}); };
 

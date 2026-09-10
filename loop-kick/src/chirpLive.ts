@@ -76,6 +76,13 @@ export class ChirpLiveListener {
   }
   stop() { for (const gid of [...this.rooms.keys()]) this.leave(gid); }
   tapToHear() { for (const r of this.rooms.values()) for (const p of r.peers.values()) if (p.audio) void p.audio.play().then(() => { r.needTap.clear(); this.emit(); }).catch(() => {}); }
+  /* phones refuse audio that no touch started: the very next tap anywhere in the phone starts every waiting stream */
+  private tapArmed = false;
+  private armTapAnywhere() {
+    if (this.tapArmed) return; this.tapArmed = true;
+    const h = () => { this.tapArmed = false; document.removeEventListener('pointerdown', h, true); document.removeEventListener('touchstart', h, true); this.tapToHear(); };
+    document.addEventListener('pointerdown', h, true); document.addEventListener('touchstart', h, true);
+  }
 
   private wantsSpeaker(r: Room, key: string) { const m = r.members.find(x => x.key === key); return r.wants({ by: { id: m ? m.id : 0 }, channelId: m ? m.channel : 0 }); }
   private syncMembers(r: Room, members: LiveMember[]) {
@@ -119,7 +126,7 @@ export class ChirpLiveListener {
         const stream = ev.streams[0] || new MediaStream([ev.track]);
         if (!p.audio) { p.audio = document.createElement('audio'); p.audio.autoplay = true; p.audio.setAttribute('playsinline', ''); p.audio.style.display = 'none'; document.body.appendChild(p.audio); }
         p.audio.srcObject = stream; p.audio.muted = !this.wantsSpeaker(r, from);
-        p.audio.play().then(() => { r.needTap.delete(from); this.emit(); }).catch(() => { r.needTap.add(from); this.emit(); });
+        p.audio.play().then(() => { r.needTap.delete(from); this.emit(); }).catch(() => { r.needTap.add(from); this.emit(); this.armTapAnywhere(); });
       };
       await pc.setRemoteDescription(new RTCSessionDescription(pl));
       const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
