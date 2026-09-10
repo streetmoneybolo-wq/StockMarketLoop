@@ -772,6 +772,16 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       else if (channelId === 0) this.gkNote(on ? `🔔 Every ${g.name} channel now alerts this phone` : `Alerts off for ${g.name}`);
     } catch (e) { this.setState({ groupsBusy: '', groupsErr: (e as Error).message || 'Could not save that' }); }
   };
+  /* which channels / voices to hear (empty = all) */
+  private gkPick = async (g: KickGroup, kind: 'channels' | 'voices', id: number) => {
+    const cur = (kind === 'channels' ? g.chirpChannels : g.chirpVoices) || [];
+    const next = id === 0 ? [] : (cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]);
+    this.setState({ groupsBusy: `pick:${g.id}` });
+    try {
+      const r = await this.transport.groupSub(kind === 'channels' ? { group_id: g.id, channel_id: 0, chirp_channels: next } : { group_id: g.id, channel_id: 0, chirp_voices: next });
+      this.setState(p => ({ groups: p.groups.map(x => x.id === g.id ? { ...x, ...r.group, members: x.members } : x), groupsBusy: '' }));
+    } catch (e) { this.setState({ groupsBusy: '', groupsErr: (e as Error).message || 'Could not save that' }); }
+  };
   private gkSavePerms = async (g: KickGroup, mode: string, users: number[]) => {
     this.setState({ groupsBusy: `perm:${g.id}`, groupsErr: '' });
     try {
@@ -1368,6 +1378,24 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                   {pill(g.alertsAll, s.groupsBusy === `${g.id}:0:alerts`, g.alertsAll ? '🔔 All on' : '🔔 All', () => void this.gkToggle(g, 0, 'alerts', !g.alertsAll), 'Alert this phone for every channel in the group')}
                                   {pill(g.chirp, s.groupsBusy === `${g.id}:0:chirp`, g.chirp ? '🔊 On' : '🔊 Chirp', () => void this.gkToggle(g, 0, 'chirp', !g.chirp), 'Hear this group\'s chirps anywhere on the site')}
                                 </div>
+                                {g.chirp && (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: .6, textTransform: 'uppercase', color: '#7e8a96' }}>Hear chirps from</div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                      {[{ id: 0, label: 'All channels' }, ...g.channels.map(c => ({ id: c.id, label: (c.type === 'alerts' ? '🚨 ' : '# ') + c.name }))].map(c => {
+                                        const on = c.id === 0 ? !(g.chirpChannels || []).length : (g.chirpChannels || []).includes(c.id);
+                                        return <button key={`gkch-${c.id}`} type="button" disabled={s.groupsBusy === `pick:${g.id}`} onClick={() => void this.gkPick(g, 'channels', c.id)} style={{ border: '1px solid ' + (on ? acc.c : 'rgba(255,255,255,.12)'), borderRadius: 999, padding: '3px 8px', fontSize: 9, cursor: 'pointer', background: on ? 'rgba(0,255,136,.14)' : 'transparent', color: on ? '#e8edf2' : '#8b98a5', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</button>;
+                                      })}
+                                    </div>
+                                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: .6, textTransform: 'uppercase', color: '#7e8a96' }}>Voices</div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                      {[{ id: 0, name: 'Everyone with the mic', avatar: '', role: '' }, ...(g.voices || [])].map(v => {
+                                        const on = v.id === 0 ? !(g.chirpVoices || []).length : (g.chirpVoices || []).includes(v.id);
+                                        return <button key={`gkv-${v.id}`} type="button" disabled={s.groupsBusy === `pick:${g.id}`} onClick={() => void this.gkPick(g, 'voices', v.id)} title={v.role} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid ' + (on ? acc.c : 'rgba(255,255,255,.12)'), borderRadius: 999, padding: '3px 8px', fontSize: 9, cursor: 'pointer', background: on ? 'rgba(0,255,136,.14)' : 'transparent', color: on ? '#e8edf2' : '#8b98a5' }}>{v.avatar ? <img src={v.avatar} alt="" referrerPolicy="no-referrer" style={{ width: 14, height: 14, borderRadius: '50%', objectFit: 'cover' }} /> : null}{v.name}{v.role ? <small style={{ opacity: .7 }}>· {v.role}</small> : null}</button>;
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
                                 {g.canChirp && (
                                   <button type="button" disabled={sending}
                                     onPointerDown={ev => { ev.preventDefault(); ev.currentTarget.setPointerCapture?.(ev.pointerId); void this.gkRecStart(g); }}
