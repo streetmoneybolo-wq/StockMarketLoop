@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 
 import { createTapeEngine } from './tape.mjs';
+import { mountChirpLive } from './chirpLive.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_SESSION_URL = 'https://stockmarketloop.com/wp-json/sml-loop-kick/v1/session';
@@ -709,6 +710,9 @@ export function createLoopKickServer(options = {}) {
       return res.json({ ok: false, reason: 'token-error' });
     }
   });
+
+  // Group Chirp LIVE signalling (owner call 2026-09-10) — peer-to-peer audio, long-polled signals, no media here
+  mountChirpLive(app, { requireAuth, gateway });
 
   if (fs.existsSync(distDir)) {
     app.use(express.static(distDir, { index: false, maxAge: '1h' }));
