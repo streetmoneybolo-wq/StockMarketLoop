@@ -41,7 +41,7 @@ export class ChirpLiveListener {
       gid: r.gid, joined: r.joined,
       speakers: r.members.filter(m => m.key !== r.self && m.mode === 'speaker').length,
       connected: [...r.peers.values()].filter(p => p.pc.connectionState === 'connected').length,
-      talking: r.members.filter(m => m.key !== r.self && m.talking > 0),
+      talking: r.members.filter(m => m.key !== r.self && m.talking > 0 && Date.now() - Number(m.talking) < 45000),   /* a stale flag is a lost 'off', not a speaker */
       needTap: r.needTap.size > 0,
     }));
   }
