@@ -812,8 +812,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     try {
       const r = await this.transport.groupChirpFeed(this._gkLast);
       const last = Number(r.last) || 0;
-      if (!this._gkLast) { this._gkLast = last; return; }
-      this._gkLast = Math.max(this._gkLast, last);
+      this._gkLast = Math.max(this._gkLast, last);   /* with no cursor yet the server only sends the last 45 s, so the first chirp ever still plays */
       if (Array.isArray(r.chirps) && r.chirps.length) { this._gkQueue.push(...r.chirps); void this.gkPlayNext(); }
     } catch { /* next tick */ }
   };
