@@ -11,6 +11,7 @@ import { BootstrapData, createTransport, fetchWatch, FeedPost, GroupChirp, KickG
 import { LiveChirpClient } from './liveChirp';
 import { CallClient, offerIsCall } from './call';
 import { TickerRoomClient, RoomInfo, TickerRoomPhase } from './tickerRoom';
+import { ChirpLiveListener, LiveRoomState } from './chirpLive';
 
 /* ---------------- static data from the design ---------------- */
 
@@ -200,6 +201,7 @@ interface State {
   gkRecSec: number;
   gkPlaying: GroupChirp | null;  /* the group chirp playing now (or waiting for a tap when autoplay was refused) */
   gkNeedTap: boolean;
+  gkLive: LiveRoomState[];        /* live rooms this phone listens in (one per group with Chirp on) */
 }
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
@@ -262,7 +264,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     searchResults: [],
     loading: false,
     uploading: false,
-    groups: [], groupsLoaded: false, groupsBusy: '', groupsNote: '', groupsErr: '', gkRecSec: 0, gkPlaying: null, gkNeedTap: false,
+    groups: [], groupsLoaded: false, groupsBusy: '', groupsNote: '', groupsErr: '', gkRecSec: 0, gkPlaying: null, gkNeedTap: false, gkLive: [],
     preferences: {},
     chirpPrefs: {},
     chirpStatus: '',
@@ -469,6 +471,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (this._interval) clearInterval(this._interval);
     this.stopNotifPolling();
     this.gkRecStop();
+    this.live.stop();
     if (this._gkNoteTimer) clearTimeout(this._gkNoteTimer);
     if (this._searchTimer) clearTimeout(this._searchTimer);
     if (this._chirpTimer) clearInterval(this._chirpTimer);
@@ -678,6 +681,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     this.transport.disconnect();
     if (this._chirpTimer) { clearInterval(this._chirpTimer); this._chirpTimer = null; }
     this.stopNotifPolling();
+    this.live.stop();
   };
   /* ---- composer (owner call 2026-09-07): a real textarea that grows as you write (up to 7 lines) ---- */
   private _composer: HTMLTextAreaElement | null = null;
@@ -751,6 +755,12 @@ export default class LoopKickPhone extends React.Component<Props, State> {
      listeners poll the feed with the alerts and play in order. ---- */
   private _gkLast = 0;
   private _gkMe = 0;
+  /* LIVE: the analyst's voice arrives over WebRTC while they talk (same rooms as the group page); recorded chirps stay the fallback */
+  private live = new ChirpLiveListener(() => String((window.LOOP_KICK_CONFIG && window.LOOP_KICK_CONFIG.sessionToken) || ''), states => this.setState({ gkLive: states }));
+  private liveSync = () => {
+    if (this.transport.name !== 'live' || !this._live) { this.live.stop(); return; }
+    this.live.sync(this.state.groups.filter(g => g.chirp).map(g => ({ id: g.id, wants: (c: { by: { id: number }; channelId: number }) => this.gkWants(g, c as GroupChirp) })));
+  };
   private _gkSig: Record<number, number> = {};   /* per-group cursor for the signal files */
   private _gkSigFails = 0;
   private _gkQueue: GroupChirp[] = [];
@@ -773,7 +783,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       const r = await this.transport.groups(withMembers);
       if (!this._gkLast) this._gkLast = Number(r.lastChirp) || 0;
       if (r.me) this._gkMe = Number(r.me) || this._gkMe;
-      this.setState(p => ({ groups: (r.groups || []).map(g => ({ ...g, members: g.members || p.groups.find(x => x.id === g.id)?.members })), groupsLoaded: true, groupsErr: '' }));
+      this.setState(p => ({ groups: (r.groups || []).map(g => ({ ...g, members: g.members || p.groups.find(x => x.id === g.id)?.members })), groupsLoaded: true, groupsErr: '' }), this.liveSync);
     } catch (e) { this.setState({ groupsLoaded: true, groupsErr: (e as Error).message || 'Could not load your groups' }); }
   };
   private gkNote = (text: string) => {
@@ -788,7 +798,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (field === 'alerts') body.alerts = on; else body.chirp = on;
     try {
       const r = await this.transport.groupSub(body);
-      this.setState(p => ({ groups: p.groups.map(x => x.id === g.id ? { ...x, ...r.group, members: x.members } : x), groupsBusy: '' }));
+      this.setState(p => ({ groups: p.groups.map(x => x.id === g.id ? { ...x, ...r.group, members: x.members } : x), groupsBusy: '' }), this.liveSync);
       if (field === 'chirp') this.gkNote(on ? `🔊 You will hear ${g.name} chirps anywhere on the site` : `Chirp off for ${g.name}`);
       else if (channelId === 0) this.gkNote(on ? `🔔 Every ${g.name} channel now alerts this phone` : `Alerts off for ${g.name}`);
     } catch (e) { this.setState({ groupsBusy: '', groupsErr: (e as Error).message || 'Could not save that' }); }
@@ -848,7 +858,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     } catch (e) { this.setState({ groupsBusy: '', groupsErr: (e as Error).message || 'That chirp did not send' }); }
   };
   /* the signal file: ~50 ms static fetch per group per second instead of a WordPress boot; falls back to the REST feed if it fails */
-  private gkWants = (g: KickGroup, c: GroupChirp) => {
+  private gkWants = (g: KickGroup, c: { channelId: number; by: { id: number } }) => {
     const ch = g.chirpChannels || [], vo = g.chirpVoices || [];
     if (ch.length && c.channelId && !ch.includes(Number(c.channelId))) return false;
     if (vo.length && !vo.includes(Number(c.by?.id))) return false;
@@ -1263,6 +1273,19 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
                     {/* screen content */}
                     <div style={{ height: screen, overflowY: 'auto', padding: '2px 12px 12px', transition: 'height .3s ease' }}>
+                      {s.gkLive.some(l => l.talking.length || l.needTap) && (() => {
+                        const talk = s.gkLive.flatMap(l => l.talking.map(m => ({ m, g: s.groups.find(x => x.id === l.gid) })));
+                        const need = s.gkLive.some(l => l.needTap);
+                        return (
+                          <div onClick={() => this.live.tapToHear()} role={need ? 'button' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 11, marginBottom: 8, cursor: need ? 'pointer' : 'default', background: 'linear-gradient(140deg,#3a1220,#1f0b12)', boxShadow: 'inset 0 0 0 1px rgba(255,59,92,.45)' }}>
+                            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#ff3b5c', flex: 'none', boxShadow: '0 0 0 4px rgba(255,59,92,.25)' }} />
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, color: '#e8edf2', lineHeight: 1.35 }}>
+                              {talk.length ? <><b style={{ color: '#ff8fa3' }}>LIVE · {talk.map(t => t.m.name).join(', ')}</b> talking in {talk[0]?.g?.name || 'the group'}</> : <b style={{ color: '#ff8fa3' }}>LIVE chirp</b>}
+                              {need ? ' — tap to hear it' : ''}
+                            </span>
+                          </div>
+                        );
+                      })()}
                       {s.gkPlaying && (
                         <div onClick={this.gkTapPlay} role={s.gkNeedTap ? 'button' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 11, marginBottom: 8, cursor: s.gkNeedTap ? 'pointer' : 'default', background: 'linear-gradient(140deg,#123a2a,#0b1f18)', boxShadow: 'inset 0 0 0 1px rgba(0,255,136,.35)' }}>
                           {s.gkPlaying.by?.avatar ? <img src={s.gkPlaying.by.avatar} alt="" referrerPolicy="no-referrer" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flex: 'none' }} /> : <span style={{ width: 24, height: 24, borderRadius: '50%', background: '#00ff88', flex: 'none' }} />}
@@ -1410,6 +1433,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           {s.groupsErr && <div style={{ fontSize: 10, color: '#ff5c7a', textAlign: 'center', padding: '2px 0' }}>{s.groupsErr}</div>}
                           {s.groups.map(g => {
                             const rec = s.groupsBusy === `rec:${g.id}`, sending = s.groupsBusy === `send:${g.id}`;
+                            const lv = s.gkLive.find(l => l.gid === g.id); const liveOn = !!(lv && lv.joined && lv.speakers > 0); const liveTalk = !!(lv && lv.talking.length);
                             const mode = g.chirpRule?.mode || 'owner', users = g.chirpRule?.users || [];
                             const pill = (on: boolean, busy: boolean, label: string, onClick: () => void, title: string) => (
                               <button type="button" disabled={busy} onClick={onClick} title={title} aria-pressed={on}
@@ -1421,7 +1445,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                   {g.icon ? <img src={g.icon} alt="" referrerPolicy="no-referrer" style={{ width: 28, height: 28, borderRadius: 8, objectFit: 'cover', flex: 'none' }} /> : <span style={{ width: 28, height: 28, borderRadius: 8, background: '#16232e', flex: 'none' }} />}
                                   <a href={g.url} target="_top" style={{ flex: 1, minWidth: 0, textDecoration: 'none' }}>
                                     <strong style={{ display: 'block', color: '#e8edf2', fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</strong>
-                                    <small style={{ color: '#dfe7ee', fontSize: 9 }}>{g.role}{g.canChirp ? ' · has the mic' : ''}</small>
+                                    <small style={{ color: '#dfe7ee', fontSize: 9 }}>{g.role}{g.canChirp ? ' · has the mic' : ''}{liveOn ? <b style={{ marginLeft: 6, color: liveTalk ? '#ff8fa3' : '#00ff88' }}>{liveTalk ? '● TALKING LIVE' : '● LIVE'}</b> : null}</small>
                                   </a>
                                   {pill(g.alertsAll, s.groupsBusy === `${g.id}:0:alerts`, g.alertsAll ? '🔔 All on' : '🔔 All', () => void this.gkToggle(g, 0, 'alerts', !g.alertsAll), 'Alert this phone for every channel in the group')}
                                   {pill(g.chirp, s.groupsBusy === `${g.id}:0:chirp`, g.chirp ? '🔊 On' : '🔊 Chirp', () => void this.gkToggle(g, 0, 'chirp', !g.chirp), 'Hear this group\'s chirps anywhere on the site')}
