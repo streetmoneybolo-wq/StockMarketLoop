@@ -1277,7 +1277,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                         const talk = s.gkLive.flatMap(l => l.talking.map(m => ({ m, g: s.groups.find(x => x.id === l.gid) })));
                         const need = s.gkLive.some(l => l.needTap);
                         return (
-                          <div onClick={() => this.live.tapToHear()} role={need ? 'button' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 11, marginBottom: 8, cursor: need ? 'pointer' : 'default', background: 'linear-gradient(140deg,#3a1220,#1f0b12)', boxShadow: 'inset 0 0 0 1px rgba(255,59,92,.45)' }}>
+                          <div onClick={() => this.live.tapToHear()} role={need ? 'button' : undefined} style={{ position: 'sticky', top: 0, zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 11, marginBottom: 8, cursor: need ? 'pointer' : 'default', background: 'linear-gradient(140deg,#3a1220,#1f0b12)', boxShadow: 'inset 0 0 0 1px rgba(255,59,92,.45), 0 6px 18px -8px rgba(0,0,0,.8)' }}>
                             <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#ff3b5c', flex: 'none', boxShadow: '0 0 0 4px rgba(255,59,92,.25)' }} />
                             <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, color: '#e8edf2', lineHeight: 1.35 }}>
                               {talk.length ? <><b style={{ color: '#ff8fa3' }}>LIVE · {talk.map(t => t.m.name).join(', ')}</b> talking in {talk[0]?.g?.name || 'the group'}</> : <b style={{ color: '#ff8fa3' }}>LIVE chirp</b>}
