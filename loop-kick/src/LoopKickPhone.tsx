@@ -700,7 +700,11 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     const natural = el.offsetHeight;                              /* layout height: unaffected by the parent's scale or its transition */
     if (natural < 1) return;
     const avail = Math.max(200, (this.state.vh || window.innerHeight) - 44);   /* 30px bottom offset + 14px breathing room */
-    const k = Math.min(1, Math.round((avail / natural) * 100) / 100);
+    /* readable (owner call 2026-09-10): the device grows to fill the frame instead of staying at its 352px design size —
+       up to 1.5× on desktop (the popup is 640px wide), and to the viewport width on phones */
+    const naturalW = Math.max(1, el.offsetWidth);
+    const availW = Math.max(200, window.innerWidth - 40);
+    const k = Math.min(1.5, Math.round(Math.min(avail / natural, availW / naturalW) * 100) / 100);
     if (Math.abs(k - this.state.fit) > 0.01) this.setState({ fit: k });
   };
 
@@ -1144,7 +1148,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
           </div>
           <div>
             <div style={{ fontFamily: "'Archivo',sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: 1.2, color: '#e8edf2' }}>LOOP-KICK</div>
-            <div style={{ fontSize: 10.5, color: '#7e8a96' }}>{unread ? unread + ' new' : 'All caught up'}</div>
+            <div style={{ fontSize: 10.5, color: '#dfe7ee' }}>{unread ? unread + ' new' : 'All caught up'}</div>
           </div>
           {unread > 0 && (
             <span style={{ minWidth: 20, height: 20, padding: '0 6px', borderRadius: 999, background: '#ff3b5c', color: '#fff', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{unread}</span>
@@ -1181,7 +1185,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 8, background: 'linear-gradient(178deg, rgba(196,216,238,.08) 0%, rgba(196,216,238,.02) 16%, transparent 40%, transparent 74%, rgba(30,48,74,.06) 100%)' }} />
                     {wm(44, 4)}
                     {/* status bar */}
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px 4px', fontFamily: mono, fontSize: 9, letterSpacing: 0.6, color: '#7e8a96' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px 4px', fontFamily: mono, fontSize: 9, letterSpacing: 0.6, color: '#dfe7ee' }}>
                       <span style={{ color: '#e8edf2', fontWeight: 600 }}>7:04</span>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ color: '#00ff88' }}>5G</span>
@@ -1204,7 +1208,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                         { key: 'groups', label: 'Groups', badge: 0 },
                       ] as { key: State['tab']; label: string; badge: number }[]).map(t => (
                         <div key={t.key} onClick={() => { this.scrollBottom(); this.setState({ tab: t.key }); if (t.key === 'groups') void this.loadGroups(); }}
-                          style={{ flex: 1, textAlign: 'center', padding: '7px 0', fontSize: 11, fontWeight: 600, borderRadius: 9, cursor: 'pointer', color: s.tab === t.key ? acc.fg : '#7e8a96', background: s.tab === t.key ? acc.c : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, transition: 'background .18s, color .18s' }}>
+                          style={{ flex: 1, textAlign: 'center', padding: '7px 0', fontSize: 11, fontWeight: 600, borderRadius: 9, cursor: 'pointer', color: s.tab === t.key ? acc.fg : '#dfe7ee', background: s.tab === t.key ? acc.c : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, transition: 'background .18s, color .18s' }}>
                           <span>{t.label}</span>
                           {t.badge > 0 && (
                             <span style={{ minWidth: 15, height: 15, padding: '0 4px', borderRadius: 999, background: '#ff3b5c', color: '#fff', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{t.badge}</span>
@@ -1232,7 +1236,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                   <div style={{ fontSize: 12.5, fontWeight: 600, color: '#e8edf2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activePerson?.name || activeThread.title || `${activeThread.type} thread`}</div>
                                   <div style={{ fontSize: 9.5, color: activePerson?.presence?.stale ? '#5c6771' : acc.c }}>{activePerson?.presence?.stale ? 'offline' : (activePerson?.presence?.state || activeThread.category)}</div>
                                 </div>
-                                {(['pinned', 'muted'] as const).map(flag => <button key={flag} onClick={() => void this.toggleFlag(flag)} title={`${activeThread[flag] ? 'Remove' : 'Set'} ${flag}`} style={{ border: 0, padding: '4px 5px', borderRadius: 6, cursor: 'pointer', background: activeThread[flag] ? acc.c : '#111a23', color: activeThread[flag] ? acc.fg : '#7e8a96', fontSize: 8 }}>{flag[0].toUpperCase()}</button>)}
+                                {(['pinned', 'muted'] as const).map(flag => <button key={flag} onClick={() => void this.toggleFlag(flag)} title={`${activeThread[flag] ? 'Remove' : 'Set'} ${flag}`} style={{ border: 0, padding: '4px 5px', borderRadius: 6, cursor: 'pointer', background: activeThread[flag] ? acc.c : '#111a23', color: activeThread[flag] ? acc.fg : '#dfe7ee', fontSize: 8 }}>{flag[0].toUpperCase()}</button>)}
                                 <button onClick={() => this.setState(prev => ({ callMenu: !prev.callMenu }))} title="Call: voice, video or Chirp" style={{ border: 0, padding: '4px 7px', borderRadius: 6, cursor: 'pointer', background: s.callMenu ? acc.c : '#111a23', color: s.callMenu ? acc.fg : acc.c, fontSize: 9, fontWeight: 800 }}>☎ Call</button>
                                 {activeThread.type === 'dm' && <button onClick={() => void this.clearActiveHistory()} title="Delete private conversation history" style={{ border: 0, padding: '4px 5px', borderRadius: 6, cursor: 'pointer', background: '#241018', color: '#ff5c7a', fontSize: 8 }}>D</button>}
                               </div>
@@ -1249,12 +1253,12 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               )}
                               {activeThread.state === 'request' && (
                                 <div style={{ display: 'flex', gap: 7, padding: '7px', borderRadius: 10, background: '#101820' }}>
-                                  <span style={{ flex: 1, color: '#98a3ad', fontSize: 10 }}>Message request</span>
+                                  <span style={{ flex: 1, color: '#e9eff4', fontSize: 10 }}>Message request</span>
                                   <button onClick={() => void this.transport.respondRequest(activeThread.id, 'accept').then(() => this.refreshSummary())} style={{ border: 0, borderRadius: 6, background: acc.c, color: acc.fg, fontSize: 9, cursor: 'pointer' }}>Accept</button>
                                   <button onClick={() => void this.transport.respondRequest(activeThread.id, 'decline').then(() => { this.setState({ activeThreadId: 0, thread: [] }); void this.refreshSummary(); })} style={{ border: '1px solid #ff5c7a', borderRadius: 6, background: 'transparent', color: '#ff5c7a', fontSize: 9, cursor: 'pointer' }}>Decline</button>
                                 </div>
                               )}
-                              {s.loading && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center' }}>Loading conversation…</div>}
+                              {s.loading && <div style={{ color: '#dfe7ee', fontSize: 10, textAlign: 'center' }}>Loading conversation…</div>}
                               {s.thread.map((m, i) => m.from === 'me' ? (
                                 <div key={m.id || i} style={{ display: 'flex', justifyContent: 'flex-end', animation: 'msgIn .2s ease' }}>
                                   <div style={{ maxWidth: '80%', padding: '9px 13px', borderRadius: '17px 17px 5px 17px', fontSize: 12, lineHeight: 1.5, background: accentGrad, color: acc.fg, boxShadow: `0 6px 18px ${acc.c}3d, inset 0 1px 0 rgba(255,255,255,.35)` }}>
@@ -1273,7 +1277,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                 </div>
                               ))}
                               {s.typingNames.length > 0 && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#98a3ad', fontSize: 10.5, padding: '2px 6px', animation: 'msgIn .2s ease' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#e9eff4', fontSize: 10.5, padding: '2px 6px', animation: 'msgIn .2s ease' }}>
                                   <span className="lk-typing" aria-hidden="true"><i /><i /><i /></span>
                                   <span><strong style={{ color: '#c3ccd4' }}>{s.typingNames.join(', ')}</strong> {s.typingNames.length > 1 ? 'are' : 'is'} typing…</span>
                                 </div>
@@ -1285,21 +1289,21 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               {(s.searchResults.length ? s.searchResults : s.people.filter(person => !person.presence?.stale).slice(0, 4)).map(person => (
                                 <button key={`person-${person.userId}`} onClick={() => this.openPersonGated(person)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', border: 0, borderRadius: 10, background: '#0a1117', color: '#e8edf2', padding: '7px 9px', cursor: 'pointer', textAlign: 'left' }}>
                                   {person.avatar ? <img src={person.avatar} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} /> : <span style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', background: '#17242a', color: acc.c }}>{person.name.slice(0, 1)}</span>}
-                                  <span style={{ minWidth: 0, flex: 1 }}><strong style={{ display: 'block', fontSize: 11 }}>{person.name}</strong><small style={{ color: '#7e8a96' }}>@{person.handle}</small></span>
-                                  <span style={{ color: person.presence?.stale ? '#4a545e' : acc.c, fontSize: 9 }}>{person.friend === false ? 'not friends' : (person.presence?.stale ? '' : '● live')}</span>
+                                  <span style={{ minWidth: 0, flex: 1 }}><strong style={{ display: 'block', fontSize: 11 }}>{person.name}</strong><small style={{ color: '#dfe7ee' }}>@{person.handle}</small></span>
+                                  <span style={{ color: person.presence?.stale ? '#b3bfca' : acc.c, fontSize: 9 }}>{person.friend === false ? 'not friends' : (person.presence?.stale ? '' : '● live')}</span>
                                 </button>
                               ))}
                               <div style={{ fontFamily: mono, fontSize: 8, color: '#5c6771', letterSpacing: 1, paddingTop: 3 }}>CONVERSATIONS</div>
-                              {s.loading && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center' }}>Loading your inbox…</div>}
+                              {s.loading && <div style={{ color: '#dfe7ee', fontSize: 10, textAlign: 'center' }}>Loading your inbox…</div>}
                               {s.threads.map(thread => {
                                 const person = thread.people?.[0];
                                 return <button key={thread.id} onClick={() => void this.openThread(thread)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', border: 0, borderRadius: 11, background: thread.unread ? 'linear-gradient(160deg,#0b1620,#081018)' : '#070d13', color: '#e8edf2', padding: '8px 9px', cursor: 'pointer', textAlign: 'left' }}>
                                   {person?.avatar ? <img src={person.avatar} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} /> : <span style={{ width: 32, height: 32, borderRadius: '50%', display: 'grid', placeItems: 'center', background: '#17242a', color: acc.c }}>{(person?.name || thread.title || thread.type).slice(0, 1).toUpperCase()}</span>}
-                                  <span style={{ minWidth: 0, flex: 1 }}><strong style={{ display: 'block', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person?.name || thread.title || `${thread.type} thread`}</strong><small style={{ display: 'block', color: '#7e8a96', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{thread.last_message.preview ? customEmojiText(thread.last_message.preview) : thread.category}</small></span>
+                                  <span style={{ minWidth: 0, flex: 1 }}><strong style={{ display: 'block', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person?.name || thread.title || `${thread.type} thread`}</strong><small style={{ display: 'block', color: '#dfe7ee', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{thread.last_message.preview ? customEmojiText(thread.last_message.preview) : thread.category}</small></span>
                                   {thread.unread > 0 && <span style={{ minWidth: 17, height: 17, borderRadius: 10, display: 'grid', placeItems: 'center', background: '#ff3b5c', color: '#fff', fontSize: 8 }}>{thread.unread}</span>}
                                 </button>;
                               })}
-                              {!s.loading && !s.threads.length && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 12 }}>No conversations yet. Choose a friend or search for a member.</div>}
+                              {!s.loading && !s.threads.length && <div style={{ color: '#dfe7ee', fontSize: 10, textAlign: 'center', padding: 12 }}>No conversations yet. Choose a friend or search for a member.</div>}
                             </>
                           )}
                           {s.sendError && (
@@ -1310,7 +1314,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
                       {s.tab === 'chirp' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                          <div style={{ color: '#98a3ad', fontSize: 10.5, lineHeight: 1.45 }}>Live push-to-talk with friends. Chirps are not stored as recordings.</div>
+                          <div style={{ color: '#e9eff4', fontSize: 10.5, lineHeight: 1.45 }}>Live push-to-talk with friends. Chirps are not stored as recordings.</div>
                           {s.chirpStatus && <div style={{ padding: 8, borderRadius: 9, color: acc.c, background: '#0a1117', fontSize: 10 }}>{s.chirpStatus}</div>}
                           {s.people.map(person => (
                             <div key={person.userId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 9px', borderRadius: 11, background: '#0a1117' }}>
@@ -1323,16 +1327,16 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                 onKeyDown={event => { if ((event.key === ' ' || event.key === 'Enter') && !event.repeat) { event.preventDefault(); event.stopPropagation(); void this.chirp.begin(person.userId); } }}
                                 onKeyUp={event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); this.chirp.end(); } }}
                                 onClick={event => event.preventDefault()} title={person.chirpReason || 'Hold to talk live'} aria-label={`Hold to Chirp ${person.name}`}
-                                style={{ border: 0, borderRadius: 8, padding: '7px 9px', background: person.chirpEnabled ? '#3d8bfd' : '#17242a', color: person.chirpEnabled ? '#fff' : '#66787f', cursor: person.chirpEnabled ? 'pointer' : 'not-allowed', fontSize: 9, touchAction: 'none' }}>Hold Chirp</button>
+                                style={{ border: 0, borderRadius: 8, padding: '7px 9px', background: person.chirpEnabled ? '#3d8bfd' : '#17242a', color: person.chirpEnabled ? '#fff' : '#c9d3dc', cursor: person.chirpEnabled ? 'pointer' : 'not-allowed', fontSize: 9, touchAction: 'none' }}>Hold Chirp</button>
                             </div>
                           ))}
-                          {!s.people.length && CHIRPS.slice(0, 1).map(c => <div key={c.user} style={{ color: '#7e8a96', fontSize: 10 }}>Your mutual friends will appear here when Chirp is enabled.</div>)}
+                          {!s.people.length && CHIRPS.slice(0, 1).map(c => <div key={c.user} style={{ color: '#dfe7ee', fontSize: 10 }}>Your mutual friends will appear here when Chirp is enabled.</div>)}
                         </div>
                       )}
 
                       {s.tab === 'friends' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          <div style={{ color: '#98a3ad', fontSize: 10.5, lineHeight: 1.45 }}>Friends are members you follow who follow you back. Only friends can message, Chirp or call each other.</div>
+                          <div style={{ color: '#e9eff4', fontSize: 10.5, lineHeight: 1.45 }}>Friends are members you follow who follow you back. Only friends can message, Chirp or call each other.</div>
                           {s.sendError && <div style={{ fontSize: 10, color: '#ff5c7a', textAlign: 'center', padding: '2px 0' }}>{s.sendError}</div>}
                           {s.people.map(person => {
                             const live = !!person.presence && !person.presence.stale && person.presence.state !== 'offline';
@@ -1344,20 +1348,20 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                 </a>
                                 <span style={{ flex: 1, minWidth: 0 }}>
                                   <strong style={{ display: 'block', color: '#e8edf2', fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person.name}</strong>
-                                  <small style={{ color: live ? acc.c : '#7e8a96', fontSize: 9.5 }}>@{person.handle}{live ? ' · live' : ''}</small>
+                                  <small style={{ color: live ? acc.c : '#dfe7ee', fontSize: 9.5 }}>@{person.handle}{live ? ' · live' : ''}</small>
                                 </span>
                                 <button type="button" onClick={() => void this.openPerson(person)} title={`Message ${person.name}`} style={{ border: 0, borderRadius: 8, padding: '6px 9px', background: 'linear-gradient(140deg,#00e07a,#009c55)', color: '#06120c', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>Message</button>
                                 <button type="button" onClick={() => void this.callFriend(person, false)} title={`Voice call ${person.name}`} aria-label={`Voice call ${person.name}`} style={{ border: 0, borderRadius: 8, padding: '6px 8px', background: '#17242a', color: '#c3ccd4', fontSize: 11, cursor: 'pointer' }}>☏</button>
                               </div>
                             );
                           })}
-                          {!s.people.length && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 12 }}>No friends yet. When you and another member follow each other you become friends and they show up here.</div>}
+                          {!s.people.length && <div style={{ color: '#dfe7ee', fontSize: 10, textAlign: 'center', padding: 12 }}>No friends yet. When you and another member follow each other you become friends and they show up here.</div>}
                         </div>
                       )}
 
                       {s.tab === 'groups' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          <div style={{ color: '#98a3ad', fontSize: 10.5, lineHeight: 1.45 }}>Pick which group channels alert this phone the moment something is posted, and turn on Chirp to hear a group's voice pings wherever you are on the site.</div>
+                          <div style={{ color: '#e9eff4', fontSize: 10.5, lineHeight: 1.45 }}>Pick which group channels alert this phone the moment something is posted, and turn on Chirp to hear a group's voice pings wherever you are on the site.</div>
                           {s.groupsNote && <div style={{ padding: 8, borderRadius: 9, color: acc.c, background: '#0a1117', fontSize: 10, lineHeight: 1.4 }}>{s.groupsNote}</div>}
                           {s.groupsErr && <div style={{ fontSize: 10, color: '#ff5c7a', textAlign: 'center', padding: '2px 0' }}>{s.groupsErr}</div>}
                           {s.groups.map(g => {
@@ -1365,7 +1369,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                             const mode = g.chirpRule?.mode || 'owner', users = g.chirpRule?.users || [];
                             const pill = (on: boolean, busy: boolean, label: string, onClick: () => void, title: string) => (
                               <button type="button" disabled={busy} onClick={onClick} title={title} aria-pressed={on}
-                                style={{ border: 0, borderRadius: 999, padding: '5px 9px', fontSize: 9, fontWeight: 700, letterSpacing: .3, whiteSpace: 'nowrap', cursor: busy ? 'default' : 'pointer', background: on ? acc.c : '#131c26', color: on ? acc.fg : '#8b98a5', opacity: busy ? .6 : 1 }}>{label}</button>
+                                style={{ border: 0, borderRadius: 999, padding: '5px 9px', fontSize: 9, fontWeight: 700, letterSpacing: .3, whiteSpace: 'nowrap', cursor: busy ? 'default' : 'pointer', background: on ? acc.c : '#131c26', color: on ? acc.fg : '#dfe7ee', opacity: busy ? .6 : 1 }}>{label}</button>
                             );
                             return (
                               <div key={`gk-${g.id}`} style={{ padding: '9px 10px', borderRadius: 12, background: '#0a1117', display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -1373,25 +1377,25 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                   {g.icon ? <img src={g.icon} alt="" referrerPolicy="no-referrer" style={{ width: 28, height: 28, borderRadius: 8, objectFit: 'cover', flex: 'none' }} /> : <span style={{ width: 28, height: 28, borderRadius: 8, background: '#16232e', flex: 'none' }} />}
                                   <a href={g.url} target="_top" style={{ flex: 1, minWidth: 0, textDecoration: 'none' }}>
                                     <strong style={{ display: 'block', color: '#e8edf2', fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</strong>
-                                    <small style={{ color: '#7e8a96', fontSize: 9 }}>{g.role}{g.canChirp ? ' · has the mic' : ''}</small>
+                                    <small style={{ color: '#dfe7ee', fontSize: 9 }}>{g.role}{g.canChirp ? ' · has the mic' : ''}</small>
                                   </a>
                                   {pill(g.alertsAll, s.groupsBusy === `${g.id}:0:alerts`, g.alertsAll ? '🔔 All on' : '🔔 All', () => void this.gkToggle(g, 0, 'alerts', !g.alertsAll), 'Alert this phone for every channel in the group')}
                                   {pill(g.chirp, s.groupsBusy === `${g.id}:0:chirp`, g.chirp ? '🔊 On' : '🔊 Chirp', () => void this.gkToggle(g, 0, 'chirp', !g.chirp), 'Hear this group\'s chirps anywhere on the site')}
                                 </div>
                                 {g.chirp && (
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: .6, textTransform: 'uppercase', color: '#7e8a96' }}>Hear chirps from</div>
+                                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: .6, textTransform: 'uppercase', color: '#dfe7ee' }}>Hear chirps from</div>
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                                       {[{ id: 0, label: 'All channels' }, ...g.channels.map(c => ({ id: c.id, label: (c.type === 'alerts' ? '🚨 ' : '# ') + c.name }))].map(c => {
                                         const on = c.id === 0 ? !(g.chirpChannels || []).length : (g.chirpChannels || []).includes(c.id);
-                                        return <button key={`gkch-${c.id}`} type="button" disabled={s.groupsBusy === `pick:${g.id}`} onClick={() => void this.gkPick(g, 'channels', c.id)} style={{ border: '1px solid ' + (on ? acc.c : 'rgba(255,255,255,.12)'), borderRadius: 999, padding: '3px 8px', fontSize: 9, cursor: 'pointer', background: on ? 'rgba(0,255,136,.14)' : 'transparent', color: on ? '#e8edf2' : '#8b98a5', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</button>;
+                                        return <button key={`gkch-${c.id}`} type="button" disabled={s.groupsBusy === `pick:${g.id}`} onClick={() => void this.gkPick(g, 'channels', c.id)} style={{ border: '1px solid ' + (on ? acc.c : 'rgba(255,255,255,.12)'), borderRadius: 999, padding: '3px 8px', fontSize: 9, cursor: 'pointer', background: on ? 'rgba(0,255,136,.14)' : 'transparent', color: on ? '#e8edf2' : '#dfe7ee', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</button>;
                                       })}
                                     </div>
-                                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: .6, textTransform: 'uppercase', color: '#7e8a96' }}>Voices</div>
+                                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: .6, textTransform: 'uppercase', color: '#dfe7ee' }}>Voices</div>
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                                       {[{ id: 0, name: 'Everyone with the mic', avatar: '', role: '' }, ...(g.voices || [])].map(v => {
                                         const on = v.id === 0 ? !(g.chirpVoices || []).length : (g.chirpVoices || []).includes(v.id);
-                                        return <button key={`gkv-${v.id}`} type="button" disabled={s.groupsBusy === `pick:${g.id}`} onClick={() => void this.gkPick(g, 'voices', v.id)} title={v.role} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid ' + (on ? acc.c : 'rgba(255,255,255,.12)'), borderRadius: 999, padding: '3px 8px', fontSize: 9, cursor: 'pointer', background: on ? 'rgba(0,255,136,.14)' : 'transparent', color: on ? '#e8edf2' : '#8b98a5' }}>{v.avatar ? <img src={v.avatar} alt="" referrerPolicy="no-referrer" style={{ width: 14, height: 14, borderRadius: '50%', objectFit: 'cover' }} /> : null}{v.name}{v.role ? <small style={{ opacity: .7 }}>· {v.role}</small> : null}</button>;
+                                        return <button key={`gkv-${v.id}`} type="button" disabled={s.groupsBusy === `pick:${g.id}`} onClick={() => void this.gkPick(g, 'voices', v.id)} title={v.role} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid ' + (on ? acc.c : 'rgba(255,255,255,.12)'), borderRadius: 999, padding: '3px 8px', fontSize: 9, cursor: 'pointer', background: on ? 'rgba(0,255,136,.14)' : 'transparent', color: on ? '#e8edf2' : '#dfe7ee' }}>{v.avatar ? <img src={v.avatar} alt="" referrerPolicy="no-referrer" style={{ width: 14, height: 14, borderRadius: '50%', objectFit: 'cover' }} /> : null}{v.name}{v.role ? <small style={{ opacity: .7 }}>· {v.role}</small> : null}</button>;
                                       })}
                                     </div>
                                   </div>
@@ -1408,18 +1412,18 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                   </button>
                                 )}
                                 {g.canManage && (
-                                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5, fontSize: 9.5, color: '#98a3ad' }}>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5, fontSize: 9.5, color: '#e9eff4' }}>
                                     <span>Who can Chirp:</span>
                                     {([['owner', 'Only me'], ['staff', 'Admins & analysts'], ['members', 'Everyone'], ['list', 'Pick members']] as [string, string][]).map(([m, label]) => (
                                       <button key={m} type="button" disabled={s.groupsBusy === `perm:${g.id}`}
                                         onClick={() => { void this.gkSavePerms(g, m, users); if (m === 'list' && !g.members) void this.loadGroups(true); }}
-                                        style={{ border: 0, borderRadius: 999, padding: '4px 8px', fontSize: 9, fontWeight: 700, cursor: 'pointer', background: mode === m ? acc.c : '#131c26', color: mode === m ? acc.fg : '#8b98a5' }}>{label}</button>
+                                        style={{ border: 0, borderRadius: 999, padding: '4px 8px', fontSize: 9, fontWeight: 700, cursor: 'pointer', background: mode === m ? acc.c : '#131c26', color: mode === m ? acc.fg : '#dfe7ee' }}>{label}</button>
                                     ))}
                                     {mode === 'list' && (g.members || []).map(m => {
                                       const on = users.includes(m.id);
                                       return (
                                         <button key={`gkm-${m.id}`} type="button" onClick={() => void this.gkSavePerms(g, 'list', on ? users.filter(x => x !== m.id) : [...users, m.id])}
-                                          style={{ border: '1px solid ' + (on ? acc.c : 'rgba(255,255,255,.12)'), borderRadius: 999, padding: '3px 8px', fontSize: 9, cursor: 'pointer', background: on ? 'rgba(0,255,136,.12)' : 'transparent', color: on ? '#e8edf2' : '#8b98a5' }}>{on ? '✓ ' : ''}{m.name}</button>
+                                          style={{ border: '1px solid ' + (on ? acc.c : 'rgba(255,255,255,.12)'), borderRadius: 999, padding: '3px 8px', fontSize: 9, cursor: 'pointer', background: on ? 'rgba(0,255,136,.12)' : 'transparent', color: on ? '#e8edf2' : '#dfe7ee' }}>{on ? '✓ ' : ''}{m.name}</button>
                                       );
                                     })}
                                     {mode === 'list' && !g.members && <span>loading members…</span>}
@@ -1427,11 +1431,11 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                   </div>
                                 )}
                                 <details>
-                                  <summary style={{ fontSize: 9.5, color: '#98a3ad', cursor: 'pointer' }}>Channels · {g.channels.filter(c => c.alerts).length} of {g.channels.length} alerting this phone</summary>
+                                  <summary style={{ fontSize: 9.5, color: '#e9eff4', cursor: 'pointer' }}>Channels · {g.channels.filter(c => c.alerts).length} of {g.channels.length} alerting this phone</summary>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
                                     {g.channels.map(c => (
                                       <div key={`gkc-${c.id}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                        <span style={{ flex: 1, minWidth: 0, fontSize: 10, color: c.alerts ? '#e8edf2' : '#7e8a96', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.type === 'alerts' ? '🚨 ' : '# '}{c.name}</span>
+                                        <span style={{ flex: 1, minWidth: 0, fontSize: 10, color: c.alerts ? '#e8edf2' : '#dfe7ee', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.type === 'alerts' ? '🚨 ' : '# '}{c.name}</span>
                                         {pill(c.alerts, s.groupsBusy === `${g.id}:${c.id}:alerts` || g.alertsAll, c.alerts ? '🔔 on' : '🔕 off', () => void this.gkToggle(g, c.id, 'alerts', !c.own), g.alertsAll ? 'All channels are on for this group' : 'Alert this phone when this channel posts')}
                                       </div>
                                     ))}
@@ -1440,8 +1444,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               </div>
                             );
                           })}
-                          {s.groupsLoaded && !s.groups.length && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 12 }}>You are not in any groups yet. Join one from the Groups page and it shows up here.</div>}
-                          {!s.groupsLoaded && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 12 }}>Loading your groups…</div>}
+                          {s.groupsLoaded && !s.groups.length && <div style={{ color: '#dfe7ee', fontSize: 10, textAlign: 'center', padding: 12 }}>You are not in any groups yet. Join one from the Groups page and it shows up here.</div>}
+                          {!s.groupsLoaded && <div style={{ color: '#dfe7ee', fontSize: 10, textAlign: 'center', padding: 12 }}>Loading your groups…</div>}
                         </div>
                       )}
 
@@ -1459,7 +1463,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               <span style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: '#5c6771' }}>{post ? (post.kind === 'article' ? 'ARTICLE' : 'POST') : 'LOADING'}</span>
                               {post && <a href={post.pageUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto', fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, textDecoration: 'none' }}>OPEN ON SITE →</a>}
                             </div>
-                            {!post && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 14 }}>{busy === 'load' ? 'Loading the post…' : (s.postNote || 'Nothing here.')}</div>}
+                            {!post && <div style={{ color: '#dfe7ee', fontSize: 10, textAlign: 'center', padding: 14 }}>{busy === 'load' ? 'Loading the post…' : (s.postNote || 'Nothing here.')}</div>}
                             {post && (
                               <div style={{ borderRadius: 13, padding: '10px 12px', background: 'linear-gradient(160deg,#0b1620 0%,#081018 100%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05)' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1468,7 +1472,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                     : <span style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', background: '#17242a', color: acc.c, fontWeight: 800, flex: 'none' }}>{(post.author.name || '?').slice(0, 1)}</span>}
                                   <div style={{ minWidth: 0 }}>
                                     <div style={{ fontSize: 11.5, fontWeight: 700, color: '#5db9ff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{post.author.name}</div>
-                                    <div style={{ fontFamily: mono, fontSize: 8.5, color: '#4a545e' }}>{stamp(post.date)}</div>
+                                    <div style={{ fontFamily: mono, fontSize: 8.5, color: '#b3bfca' }}>{stamp(post.date)}</div>
                                   </div>
                                 </div>
                                 {post.title && <div style={{ fontSize: 12.5, fontWeight: 800, color: '#e8edf2', marginTop: 8, lineHeight: 1.35 }}>{post.title}</div>}
@@ -1487,7 +1491,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                   <div key={c.id} style={{ display: 'flex', gap: 7, padding: '6px 9px', borderRadius: 10, background: '#070d13' }}>
                                     {c.avatar ? <img src={c.avatar} alt="" referrerPolicy="no-referrer" style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', flex: 'none' }} /> : <span style={{ width: 20, height: 20, borderRadius: '50%', background: '#17242a', flex: 'none' }} />}
                                     <div style={{ minWidth: 0, flex: 1 }}>
-                                      <div style={{ fontSize: 10, fontWeight: 700, color: c.mine ? acc.c : '#c3ccd4' }}>{c.name} <span style={{ fontFamily: mono, fontSize: 8, color: '#4a545e', fontWeight: 400 }}>{stamp(c.date)}</span></div>
+                                      <div style={{ fontSize: 10, fontWeight: 700, color: c.mine ? acc.c : '#c3ccd4' }}>{c.name} <span style={{ fontFamily: mono, fontSize: 8, color: '#b3bfca', fontWeight: 400 }}>{stamp(c.date)}</span></div>
                                       <div style={{ fontSize: 10.5, color: '#dbe4ec', lineHeight: 1.4, wordBreak: 'break-word' }}>{c.text}</div>
                                     </div>
                                   </div>
@@ -1531,21 +1535,21 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                                 : <div style={{ width: 26, height: 26, borderRadius: 8, flex: 'none', background: n.tint, boxShadow: 'inset 0 1px 0 rgba(255,255,255,.25)' }} />}
                               <div style={{ minWidth: 0, flex: 1 }}>
                                 <div style={{ fontSize: 11.5, fontWeight: 600, color: n.actor ? '#5db9ff' : '#e8edf2', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.title}</div>
-                                <div style={{ fontSize: 11, color: '#7e8a96', lineHeight: 1.45 }}>{n.text}</div>
+                                <div style={{ fontSize: 11, color: '#dfe7ee', lineHeight: 1.45 }}>{n.text}</div>
                                 {(n.link || n.type === 'dm') && <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, marginTop: 4 }}>{n.type === 'dm' ? 'OPEN MESSAGE →' : n.type === 'live' ? 'WATCH LIVE →' : n.type === 'video' ? 'WATCH →' : n.type === 'follow' ? 'VIEW PROFILE →' : n.type === 'news' ? 'READ ON THE LOOP →' : n.type === 'mention' ? 'OPEN THE POST →' : (n.type === 'loop_bucks' || n.type === 'gift') ? 'OPEN WALLET →' : (n.type === 'group_alert' || n.type === 'group_chirp') ? 'OPEN THE GROUP →' : 'VIEW POST →'}</div>}
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginLeft: 'auto', flex: 'none' }}>
-                                <div style={{ fontFamily: mono, fontSize: 8.5, color: '#4a545e' }}>{n.time}</div>
+                                <div style={{ fontFamily: mono, fontSize: 8.5, color: '#b3bfca' }}>{n.time}</div>
                                 {n.type === 'follow' && n.actor?.id && (n.canFollowBack || n.following) && (
                                   <button type="button" disabled={!n.canFollowBack} onClick={e => { e.stopPropagation(); void this.followBack(n); }}
-                                    style={{ border: 0, borderRadius: 999, padding: '5px 9px', fontSize: 9, fontWeight: 700, cursor: n.canFollowBack ? 'pointer' : 'default', background: n.canFollowBack ? acc.c : '#131c26', color: n.canFollowBack ? acc.fg : '#7e8a96' }}>
+                                    style={{ border: 0, borderRadius: 999, padding: '5px 9px', fontSize: 9, fontWeight: 700, cursor: n.canFollowBack ? 'pointer' : 'default', background: n.canFollowBack ? acc.c : '#131c26', color: n.canFollowBack ? acc.fg : '#dfe7ee' }}>
                                     {n.canFollowBack ? 'Follow back' : 'Following'}
                                   </button>
                                 )}
                               </div>
                             </div>
                           ))}
-                          {!s.notifs.length && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 14 }}>No site alerts. You’re all caught up.</div>}
+                          {!s.notifs.length && <div style={{ color: '#dfe7ee', fontSize: 10, textAlign: 'center', padding: 14 }}>No site alerts. You’re all caught up.</div>}
                         </div>
                       )}
                     </div>
@@ -1590,7 +1594,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               }
                               this.setState({ mode: mo.key } as Pick<State, 'mode'>);
                             }}
-                            style={{ flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 9.5, fontWeight: 600, letterSpacing: 0.3, background: s.mode === mo.key ? acc.c : 'transparent', color: s.mode === mo.key ? acc.fg : '#7e8a96', whiteSpace: 'nowrap', transition: 'background .18s, color .18s' }}>{mo.label}</button>
+                            style={{ flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 9.5, fontWeight: 600, letterSpacing: 0.3, background: s.mode === mo.key ? acc.c : 'transparent', color: s.mode === mo.key ? acc.fg : '#dfe7ee', whiteSpace: 'nowrap', transition: 'background .18s, color .18s' }}>{mo.label}</button>
                         ))}
                       </div>
                       <button onClick={() => { this.scrollBottom(); this.setState(p => ({ slid: !p.slid })); }} title="Fold / unfold top screen"
@@ -1637,15 +1641,15 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                             {btn(tr.phase === 'looking' && !room ? '…' : 'Look', '#131d26', '#e8edf2', () => this.roomLook())}
                           </div>
                           <div style={{ padding: '4px 10px 8px', minHeight: 96 }}>
-                            {!tr.symbol && <div style={{ fontSize: 10.5, color: '#7e8a96', lineHeight: 1.5, padding: '10px 2px' }}>Every ticker terminal has a live voice chart room. Type a ticker to see who is in it before you join.</div>}
+                            {!tr.symbol && <div style={{ fontSize: 10.5, color: '#dfe7ee', lineHeight: 1.5, padding: '10px 2px' }}>Every ticker terminal has a live voice chart room. Type a ticker to see who is in it before you join.</div>}
                             {tr.error && <div style={{ fontSize: 10.5, color: '#ff5c7a', padding: '4px 2px' }}>{tr.error}</div>}
-                            {tr.symbol && room && !members.length && <div style={{ fontSize: 10.5, color: '#7e8a96', padding: '8px 2px' }}>No traders in ${tr.symbol} right now. Be the first.</div>}
+                            {tr.symbol && room && !members.length && <div style={{ fontSize: 10.5, color: '#dfe7ee', padding: '8px 2px' }}>No traders in ${tr.symbol} right now. Be the first.</div>}
                             {members.slice(0, 12).map(m => (
                               <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 2px' }}>
                                 <img src={m.avatar_url} alt="" width={26} height={26} style={{ width: 26, height: 26, borderRadius: '50%', objectFit: 'cover', flex: 'none', background: '#131d26', boxShadow: m.speaking ? `0 0 0 2px ${acc.c}` : 'none' }} />
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <div style={{ fontSize: 11.5, fontWeight: 600, color: '#e8edf2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}{room && m.id === room.current_user_id ? ' (you)' : ''}</div>
-                                  <div style={{ fontSize: 9.5, color: '#7e8a96' }}>{m.mode === 'speaker' ? (m.muted ? 'Muted speaker' : 'Speaker') : 'Listening'}</div>
+                                  <div style={{ fontSize: 9.5, color: '#dfe7ee' }}>{m.mode === 'speaker' ? (m.muted ? 'Muted speaker' : 'Speaker') : 'Listening'}</div>
                                 </div>
                                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.speaking ? acc.c : '#2a343d', boxShadow: m.speaking ? `0 0 8px ${acc.c}` : 'none', flex: 'none' }} />
                               </div>
@@ -1658,7 +1662,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               {!joined && btn('Listen', '#131d26', '#e8edf2', () => this.roomJoin('listener'), tr.phase === 'joining')}
                               {joined && tr.mode === 'speaker' && btn(tr.muted ? 'Unmute' : 'Mute', tr.muted ? '#ff5c7a' : '#131d26', tr.muted ? '#fff' : '#e8edf2', this.roomMute)}
                               {joined && btn('Leave', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.leaveRoom)}
-                              {btn('Open terminal ↗', 'transparent', '#7e8a96', this.roomOpenTerminal)}
+                              {btn('Open terminal ↗', 'transparent', '#dfe7ee', this.roomOpenTerminal)}
                             </div>
                           )}
                           {joined && tr.mode === 'speaker' && (
@@ -1695,7 +1699,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, background: '#000' }} />
                           )}
                           {!hasMedia && (
-                            <div style={{ padding: '0 18px', textAlign: 'center', fontSize: 10.5, lineHeight: 1.5, color: '#7e8a96' }}>
+                            <div style={{ padding: '0 18px', textAlign: 'center', fontSize: 10.5, lineHeight: 1.5, color: '#dfe7ee' }}>
                               {wd ? 'Search below for a Loop Channel video or live stream, or tap the mini button on any watch page.' : 'Loading the Loop Channel…'}
                             </div>
                           )}
@@ -1706,7 +1710,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           )}
                           {hasMedia && s.playing && (
                             <div onClick={() => this.setState({ playing: false })} title="Pause"
-                              style={{ position: 'absolute', top: 26, left: 8, zIndex: 3, padding: '3px 7px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, color: '#98a3ad', cursor: 'pointer' }}>❚❚</div>
+                              style={{ position: 'absolute', top: 26, left: 8, zIndex: 3, padding: '3px 7px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, color: '#e9eff4', cursor: 'pointer' }}>❚❚</div>
                           )}
                           {hasMedia && s.playing && s.watchNeedTap && (
                             <div onClick={this.unmuteWatch}
@@ -1719,7 +1723,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           ) : item ? (
                             <span style={{ position: 'absolute', top: 7, left: 8, zIndex: 3, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: '#5c6771' }}>LOOP CHANNEL</span>
                           ) : null}
-                          {isLive && <span style={{ position: 'absolute', top: 7, right: 8, zIndex: 3, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, color: '#98a3ad' }}>{s.viewers.toLocaleString()} watching</span>}
+                          {isLive && <span style={{ position: 'absolute', top: 7, right: 8, zIndex: 3, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, color: '#e9eff4' }}>{s.viewers.toLocaleString()} watching</span>}
                         </div>
                         <div onClick={() => { if (item && item.url) window.open(item.url, '_blank', 'noopener'); }} title={item ? 'Open the full watch page' : undefined}
                           style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', cursor: item ? 'pointer' : 'default' }}>
@@ -1783,12 +1787,12 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           )}
                           <video ref={el => { this._localEl = el; this.attachStream(el, this._localStream, true); }} autoPlay playsInline muted
                             style={{ position: 'absolute', right: 8, bottom: 8, width: 58, height: 82, borderRadius: 9, objectFit: 'cover', background: '#0b1218', border: '1px solid #1e2831', transform: 'scaleX(-1)', display: s.camOff ? 'none' : 'block' }} />
-                          {s.camOff && <div style={{ position: 'absolute', right: 8, bottom: 8, width: 58, height: 82, borderRadius: 9, background: '#0b1218', border: '1px solid #1e2831', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: mono, fontSize: 7, color: '#4a545e' }}>CAM OFF</div>}
+                          {s.camOff && <div style={{ position: 'absolute', right: 8, bottom: 8, width: 58, height: 82, borderRadius: 9, background: '#0b1218', border: '1px solid #1e2831', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: mono, fontSize: 7, color: '#b3bfca' }}>CAM OFF</div>}
                         </div>
                         {!preCall && (
                           <div style={{ display: 'flex', justifyContent: 'center', gap: 10, padding: '9px 0 10px' }}>
-                            {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', this.toggleMute)}
-                            {callBtn('V', s.camOff ? '#ff5c7a' : '#131d26', s.camOff ? '#fff' : '#98a3ad', this.toggleCam)}
+                            {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#e9eff4', this.toggleMute)}
+                            {callBtn('V', s.camOff ? '#ff5c7a' : '#131d26', s.camOff ? '#fff' : '#e9eff4', this.toggleCam)}
                             {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.endCall, true)}
                           </div>
                         )}
@@ -1817,8 +1821,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           <button onClick={() => this.startCall(false)} style={{ padding: '9px 26px', borderRadius: 999, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, background: acc.c, color: acc.fg }}>📞 Call {calleeName.split(' ')[0]}</button>
                         ) : (
                           <div style={{ display: 'flex', justifyContent: 'center', gap: 10, paddingTop: 2 }}>
-                            {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#98a3ad', this.toggleMute)}
-                            {callBtn('S', s.speaker ? acc.c : '#131d26', s.speaker ? acc.fg : '#98a3ad', () => this.setState(p => ({ speaker: !p.speaker })))}
+                            {callBtn('M', s.muted ? '#ff5c7a' : '#131d26', s.muted ? '#fff' : '#e9eff4', this.toggleMute)}
+                            {callBtn('S', s.speaker ? acc.c : '#131d26', s.speaker ? acc.fg : '#e9eff4', () => this.setState(p => ({ speaker: !p.speaker })))}
                             {callBtn('✕', 'linear-gradient(140deg,#ff5c7a,#d42a4c)', '#fff', this.endCall, true)}
                           </div>
                         )}
@@ -1865,7 +1869,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           <span style={{ width: 76, flex: 'none', fontFamily: mono, fontSize: 8, letterSpacing: 1.2, color: '#5c6771' }}>FONT</span>
                           {FONT_OPTS.map(f => (
                             <button key={f.key} onClick={() => this.setState({ font: f.key })}
-                              style={{ flex: 1, padding: '6px 0', borderRadius: 8, cursor: 'pointer', background: f.key === s.font ? '#131d26' : '#04090e', border: `1px solid ${f.key === s.font ? acc.c : '#1e2831'}`, color: f.key === s.font ? '#e8edf2' : '#7e8a96', fontFamily: f.stack, fontSize: 10.5, whiteSpace: 'nowrap' }}>{f.label}</button>
+                              style={{ flex: 1, padding: '6px 0', borderRadius: 8, cursor: 'pointer', background: f.key === s.font ? '#131d26' : '#04090e', border: `1px solid ${f.key === s.font ? acc.c : '#1e2831'}`, color: f.key === s.font ? '#e8edf2' : '#dfe7ee', fontFamily: f.stack, fontSize: 10.5, whiteSpace: 'nowrap' }}>{f.label}</button>
                           ))}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1898,7 +1902,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           ['allow_requests', 'MESSAGE REQUESTS'],
                         ] as const).map(([key, label]) => (
                           <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <span style={{ flex: 1, fontFamily: mono, fontSize: 8, letterSpacing: 1.1, color: '#7e8a96' }}>{label}</span>
+                            <span style={{ flex: 1, fontFamily: mono, fontSize: 8, letterSpacing: 1.1, color: '#dfe7ee' }}>{label}</span>
                             <button onClick={() => void this.togglePreference(key)} style={{ width: 34, height: 19, padding: 2, border: 0, borderRadius: 10, cursor: 'pointer', background: s.preferences[key] ? acc.c : '#242c34' }}><span style={{ display: 'block', width: 15, height: 15, borderRadius: '50%', background: '#fff', transform: `translateX(${s.preferences[key] ? 15 : 0}px)`, transition: 'transform .18s' }} /></button>
                           </div>
                         ))}
@@ -1907,7 +1911,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                           ['dnd', 'CHIRP DO NOT DISTURB'],
                         ] as const).map(([key, label]) => (
                           <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <span style={{ flex: 1, fontFamily: mono, fontSize: 8, letterSpacing: 1.1, color: '#7e8a96' }}>{label}</span>
+                            <span style={{ flex: 1, fontFamily: mono, fontSize: 8, letterSpacing: 1.1, color: '#dfe7ee' }}>{label}</span>
                             <button onClick={() => void this.toggleChirpPreference(key)} style={{ width: 34, height: 19, padding: 2, border: 0, borderRadius: 10, cursor: 'pointer', background: s.chirpPrefs[key] ? acc.c : '#242c34' }}><span style={{ display: 'block', width: 15, height: 15, borderRadius: '50%', background: '#fff', transform: `translateX(${s.chirpPrefs[key] ? 15 : 0}px)`, transition: 'transform .18s' }} /></button>
                           </div>
                         ))}
@@ -1918,7 +1922,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                     {coverVisible && (
                       <div onClick={() => { this.scrollBottom(); this.setState(p => ({ slid: !p.slid })); }} style={{ display: 'flex', flexDirection: 'column', gap: 8, cursor: 'pointer' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1px 2px' }}>
-                          <span style={{ fontFamily: "'Archivo',sans-serif", fontSize: 9, letterSpacing: 2, color: '#4a545e' }}>LOOP-KICK</span>
+                          <span style={{ fontFamily: "'Archivo',sans-serif", fontSize: 9, letterSpacing: 2, color: '#b3bfca' }}>LOOP-KICK</span>
                           <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <span style={{ fontFamily: mono, fontSize: 10, color: '#e8edf2', fontWeight: 600 }}>7:04</span>
                             <span className="lk-x" onClick={e => { e.stopPropagation(); this.setState({ open: false, slid: false }); }}
@@ -1930,9 +1934,9 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                             <div style={{ width: 22, height: 22, borderRadius: 7, flex: 'none', background: n.tint, boxShadow: 'inset 0 1px 0 rgba(255,255,255,.25)' }} />
                             <div style={{ minWidth: 0, flex: 1 }}>
                               <div style={{ fontSize: 11, fontWeight: 600, color: '#e8edf2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.title}</div>
-                              <div style={{ fontSize: 10, color: '#7e8a96', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.text}</div>
+                              <div style={{ fontSize: 10, color: '#dfe7ee', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.text}</div>
                             </div>
-                            <div style={{ fontFamily: mono, fontSize: 8.5, color: '#4a545e', flex: 'none' }}>{n.time}</div>
+                            <div style={{ fontFamily: mono, fontSize: 8.5, color: '#b3bfca', flex: 'none' }}>{n.time}</div>
                           </div>
                         ))}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, paddingTop: 2, fontFamily: mono, fontSize: 8, letterSpacing: 1.5, color: acc.c }}>TAP TO UNFOLD ▴</div>
