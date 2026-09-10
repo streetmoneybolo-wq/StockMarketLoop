@@ -923,6 +923,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   private _onParentMessage = (event: MessageEvent) => {
     if (event.source !== window.parent) return;
     const type = event.data && (event.data as { type?: string }).type;
+    /* a tap anywhere on the host page (outside the phone) counts as the gesture phones demand before audio plays */
+    if (type === 'sml-loop-kick:tap') { if (this.state.gkLive.some(l => l.needTap)) this.live.tapToHear(); if (this.state.gkNeedTap) this.gkTapPlay(); return; }
     if (type === 'sml-loop-kick:open') {
       // Owner call 2026-09-08: the phone's own X (or Escape) leaves the app closed and the page hides the popup;
       // when the page opens the popup again the phone must come back up too, not stay folded behind the dock mask.
