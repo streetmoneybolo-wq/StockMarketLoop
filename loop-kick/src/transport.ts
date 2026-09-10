@@ -68,6 +68,15 @@ export interface BootstrapData {
   incoming: { incoming: unknown[]; missed: unknown[] };
 }
 
+/* Group alerts + group Chirp (mu-plugin sml-group-kick, owner call 2026-09-10) */
+export interface KickGroupChannel { id: number; name: string; type: string; alerts: boolean; own: boolean }
+export interface KickGroupMember { id: number; name: string; handle: string; avatar: string; role: string }
+export interface KickGroup {
+  id: number; name: string; slug: string; url: string; icon: string; role: string; isOwner: boolean; canManage: boolean; canChirp: boolean;
+  alertsAll: boolean; chirp: boolean; channels: KickGroupChannel[]; chirpRule: { mode: string; users: number[] } | null; members?: KickGroupMember[];
+}
+export interface GroupChirp { id: number; groupId: number; group: string; groupUrl: string; channelId: number; url: string; duration: number; at: string; by: { id: number; name: string; handle: string; avatar: string } }
+
 export interface Transport {
   name: string;
   bootstrap(): Promise<BootstrapData>;
@@ -104,6 +113,12 @@ export interface Transport {
   /** a feed post by item id (stream-*, chart-*, wp-*) and the actions on it */
   post(item: string): Promise<FeedPost>;
   postAction(item: string, action: 'like' | 'comment' | 'share', extra?: { text?: string; platform?: string }): Promise<FeedPost>;
+  /* group alerts + group Chirp */
+  groups(withMembers?: boolean): Promise<{ groups: KickGroup[]; lastChirp: number; chirpOn: boolean }>;
+  groupSub(input: { group_id: number; channel_id: number; alerts?: boolean; chirp?: boolean }): Promise<{ ok: boolean; group: KickGroup }>;
+  groupChirp(input: { group_id: number; channel_id?: number; attachment_id: number; duration?: number }): Promise<{ ok: boolean; chirp: GroupChirp | null; listeners: number }>;
+  groupChirpFeed(since: number): Promise<{ last: number; chirps: GroupChirp[]; on: boolean }>;
+  groupChirpPerms(input: { group_id: number; mode: string; users: number[] }): Promise<{ ok: boolean; rule: { mode: string; users: number[] } }>;
   connect(onMessage: (m: WireMessage) => void, onRefresh?: () => void, onTyping?: (names: string[]) => void): void;
   disconnect(): void;
 }
@@ -148,6 +163,9 @@ function mockTransport(): Transport {
     upload: async file => ({ id: 1, url: URL.createObjectURL(file), mime: file.type }),
     chirpStart: async () => ({ id: 1, decision: 'live' }), chirpSignal: async () => ({}), chirpEnd: async () => ({}), chirpIncoming: async () => ({ incoming: [], missed: [] }),
     iceConfig: async () => ({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }),
+    groups: async () => ({ groups: [], lastChirp: 0, chirpOn: false }), groupSub: async () => ({ ok: true, group: null as unknown as KickGroup }),
+    groupChirp: async () => ({ ok: true, chirp: null, listeners: 0 }), groupChirpFeed: async () => ({ last: 0, chirps: [], on: false }),
+    groupChirpPerms: async input => ({ ok: true, rule: { mode: input.mode, users: input.users } }),
     livekitToken: async () => ({ ok: false, reason: 'no-livekit' }),
     tickerRoom: async (symbol) => ({ symbol, title: `${symbol} Live Voice Room`, count: 0, members: [], current_user_id: 1 }),
     tickerRoomJoin: async (symbol) => ({ symbol, count: 1, members: [{ id: 1, name: 'You', handle: 'you', profile_url: '', avatar_url: '', mode: 'listener', speaking: false, muted: true, last_seen: 0 }], current_user_id: 1 }),
@@ -256,6 +274,11 @@ function liveTransport(cfg: LoopKickConfig): Transport {
     chirpEnd: id => request(`/api/chirp/sessions/${id}/end`, { method: 'POST', body: '{}' }),
     chirpIncoming: () => request('/api/chirp/incoming'),
     iceConfig: () => request('/api/ice'),
+    groups: (withMembers = false) => request(`/api/groups${withMembers ? '?members=1' : ''}`),
+    groupSub: input => request('/api/groups/sub', { method: 'POST', body: JSON.stringify(input) }),
+    groupChirp: input => request('/api/groups/chirp', { method: 'POST', body: JSON.stringify(input) }),
+    groupChirpFeed: since => request(`/api/groups/chirp-feed?since=${Number(since) || 0}`),
+    groupChirpPerms: input => request('/api/groups/chirp-perms', { method: 'POST', body: JSON.stringify(input) }),
     livekitToken: (room) => request('/api/livekit-token', { method: 'POST', body: JSON.stringify({ room }) }),
     tickerRoom: symbol => request(`/api/ticker-room?symbol=${encodeURIComponent(symbol)}`),
     tickerRoomJoin: (symbol, mode) => request('/api/ticker-room/join', { method: 'POST', body: JSON.stringify({ symbol, mode }) }),

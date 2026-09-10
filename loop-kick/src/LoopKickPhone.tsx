@@ -7,7 +7,7 @@
  * the rendered device matches the approved design.
  */
 import React from 'react';
-import { BootstrapData, createTransport, fetchWatch, FeedPost, Person, SiteNotification, ThreadSummary, Transport, WatchData, WatchItem, WireMessage } from './transport';
+import { BootstrapData, createTransport, fetchWatch, FeedPost, GroupChirp, KickGroup, Person, SiteNotification, ThreadSummary, Transport, WatchData, WatchItem, WireMessage } from './transport';
 import { LiveChirpClient } from './liveChirp';
 import { CallClient, offerIsCall } from './call';
 import { TickerRoomClient, RoomInfo, TickerRoomPhase } from './tickerRoom';
@@ -137,7 +137,7 @@ interface RoomMsg { user: string; color: string; text: string; }
 interface State {
   open: boolean;
   slid: boolean;
-  tab: 'messages' | 'chirp' | 'notifs' | 'friends';
+  tab: 'messages' | 'chirp' | 'notifs' | 'friends' | 'groups';
   mode: 'compose' | 'watch' | 'room' | 'video' | 'voice' | 'style';
   accent: string;
   font: string;
@@ -191,6 +191,15 @@ interface State {
   postBusy: string;              /* 'load' | 'like' | 'comment' | 'share' | '' */
   postReply: string;             /* the reply being written */
   postNote: string;              /* short feedback line (e.g. 'Link copied') */
+  /* Groups tab (owner call 2026-09-10): per-channel group alerts into this phone + group Chirp */
+  groups: KickGroup[];
+  groupsLoaded: boolean;
+  groupsBusy: string;            /* '<gid>:<cid>:<field>' while a toggle saves, 'rec:<gid>' recording, 'send:<gid>' uploading, 'perm:<gid>' saving who may Chirp */
+  groupsNote: string;
+  groupsErr: string;
+  gkRecSec: number;
+  gkPlaying: GroupChirp | null;  /* the group chirp playing now (or waiting for a tap when autoplay was refused) */
+  gkNeedTap: boolean;
 }
 
 const S: Record<string, React.CSSProperties> = {}; // populated in render helpers below
@@ -253,6 +262,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     searchResults: [],
     loading: false,
     uploading: false,
+    groups: [], groupsLoaded: false, groupsBusy: '', groupsNote: '', groupsErr: '', gkRecSec: 0, gkPlaying: null, gkNeedTap: false,
     preferences: {},
     chirpPrefs: {},
     chirpStatus: '',
@@ -456,6 +466,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (this._watchTimer) clearTimeout(this._watchTimer);
     if (this._interval) clearInterval(this._interval);
     this.stopNotifPolling();
+    this.gkRecStop();
+    if (this._gkNoteTimer) clearTimeout(this._gkNoteTimer);
     if (this._searchTimer) clearTimeout(this._searchTimer);
     if (this._chirpTimer) clearInterval(this._chirpTimer);
     this._surfaceTimers.forEach(timer => clearTimeout(timer));
@@ -655,6 +667,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     void first.finally(() => { if (this._live) this.transport.connect(this.onIncoming, () => void this.refreshSummary(), names => { if (names.join('|') !== this.state.typingNames.join('|')) this.setState({ typingNames: names }); }); });
     if (this._chirpTick && !this._chirpTimer) this._chirpTimer = setInterval(this._chirpTick, 2800);
     this.startNotifPolling();
+    void this.loadGroups();
   };
   private pauseLive = () => {
     if (!this._live) return;
@@ -706,12 +719,115 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       if (document.visibilityState !== 'hidden') {
         try { const r = await this.transport.notifications(); if (r && Array.isArray(r.items)) this.setState({ notifs: this.toNotifs(r.items) }); }
         catch { /* the next tick retries */ }
+        if (this.state.groups.some(g => g.chirp)) void this.gkPoll();
       }
-      if (this._live) this._notifTimer = setTimeout(tick, document.visibilityState === 'hidden' ? 30000 : 7000);
+      if (this._live) this._notifTimer = setTimeout(tick, document.visibilityState === 'hidden' ? 30000 : (this.state.groups.some(g => g.chirp) ? 5000 : 7000));
     };
     this._notifTimer = setTimeout(tick, 7000);
   };
   private stopNotifPolling = () => { if (this._notifTimer) clearTimeout(this._notifTimer); this._notifTimer = null; };
+
+  /* ---- Groups (owner call 2026-09-10): per-channel group alerts into this phone + group Chirp.
+     Alerts ride the normal alert feed (the WP side fans them out); Chirp = hold-to-record → upload → sml-group-kick,
+     listeners poll the feed with the alerts and play in order. ---- */
+  private _gkLast = 0;
+  private _gkQueue: GroupChirp[] = [];
+  private _gkAudio: HTMLAudioElement | null = null;
+  private _gkRec: MediaRecorder | null = null;
+  private _gkChunks: Blob[] = [];
+  private _gkRecTimer: ReturnType<typeof setInterval> | null = null;
+  private _gkRecStart = 0;
+  private _gkNoteTimer: ReturnType<typeof setTimeout> | null = null;
+  private loadGroups = async (withMembers = false) => {
+    if (this.transport.name !== 'live') { this.setState({ groupsLoaded: true }); return; }
+    try {
+      const r = await this.transport.groups(withMembers);
+      if (!this._gkLast) this._gkLast = Number(r.lastChirp) || 0;
+      this.setState(p => ({ groups: (r.groups || []).map(g => ({ ...g, members: g.members || p.groups.find(x => x.id === g.id)?.members })), groupsLoaded: true, groupsErr: '' }));
+    } catch (e) { this.setState({ groupsLoaded: true, groupsErr: (e as Error).message || 'Could not load your groups' }); }
+  };
+  private gkNote = (text: string) => {
+    this.setState({ groupsNote: text });
+    if (this._gkNoteTimer) clearTimeout(this._gkNoteTimer);
+    this._gkNoteTimer = setTimeout(() => this.setState({ groupsNote: '' }), 6000);
+  };
+  private gkToggle = async (g: KickGroup, channelId: number, field: 'alerts' | 'chirp', on: boolean) => {
+    const key = `${g.id}:${channelId}:${field}`;
+    this.setState({ groupsBusy: key, groupsErr: '' });
+    const body: { group_id: number; channel_id: number; alerts?: boolean; chirp?: boolean } = { group_id: g.id, channel_id: channelId };
+    if (field === 'alerts') body.alerts = on; else body.chirp = on;
+    try {
+      const r = await this.transport.groupSub(body);
+      this.setState(p => ({ groups: p.groups.map(x => x.id === g.id ? { ...x, ...r.group, members: x.members } : x), groupsBusy: '' }));
+      if (field === 'chirp') this.gkNote(on ? `🔊 You will hear ${g.name} chirps anywhere on the site` : `Chirp off for ${g.name}`);
+      else if (channelId === 0) this.gkNote(on ? `🔔 Every ${g.name} channel now alerts this phone` : `Alerts off for ${g.name}`);
+    } catch (e) { this.setState({ groupsBusy: '', groupsErr: (e as Error).message || 'Could not save that' }); }
+  };
+  private gkSavePerms = async (g: KickGroup, mode: string, users: number[]) => {
+    this.setState({ groupsBusy: `perm:${g.id}`, groupsErr: '' });
+    try {
+      const r = await this.transport.groupChirpPerms({ group_id: g.id, mode, users });
+      this.setState(p => ({ groups: p.groups.map(x => x.id === g.id ? { ...x, chirpRule: r.rule } : x), groupsBusy: '' }));
+    } catch (e) { this.setState({ groupsBusy: '', groupsErr: (e as Error).message || 'Could not save who can Chirp' }); }
+  };
+  private gkRecStart = async (g: KickGroup) => {
+    if (this._gkRec) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') { this.setState({ groupsErr: 'This browser cannot record audio.' }); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      this._gkChunks = [];
+      rec.ondataavailable = ev => { if (ev.data && ev.data.size) this._gkChunks.push(ev.data); };
+      rec.onstop = () => { stream.getTracks().forEach(tr => tr.stop()); void this.gkRecDone(g, rec.mimeType || mime || 'audio/webm'); };
+      rec.start(250);
+      this._gkRec = rec; this._gkRecStart = Date.now();
+      this.setState({ groupsBusy: `rec:${g.id}`, gkRecSec: 0, groupsErr: '' });
+      this._gkRecTimer = setInterval(() => { const sec = Math.floor((Date.now() - this._gkRecStart) / 1000); this.setState({ gkRecSec: sec }); if (sec >= 30) this.gkRecStop(); }, 250);
+    } catch { this.setState({ groupsErr: 'Microphone blocked. Allow the mic to Chirp.' }); }
+  };
+  private gkRecStop = () => {
+    const rec = this._gkRec; if (!rec) return;
+    this._gkRec = null;
+    if (this._gkRecTimer) { clearInterval(this._gkRecTimer); this._gkRecTimer = null; }
+    try { if (rec.state !== 'inactive') rec.stop(); } catch { /* already stopped */ }
+  };
+  private gkRecDone = async (g: KickGroup, mime: string) => {
+    const sec = Math.max(1, Math.round((Date.now() - this._gkRecStart) / 1000));
+    const blob = new Blob(this._gkChunks, { type: mime.split(';')[0] });
+    this._gkChunks = [];
+    if (blob.size < 400) { this.setState({ groupsBusy: '', groupsErr: 'Hold the button while you talk.' }); return; }
+    this.setState({ groupsBusy: `send:${g.id}` });
+    try {
+      const ext = /mp4/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : 'webm';
+      const file = new File([blob], `chirp-${Date.now()}.${ext}`, { type: blob.type });
+      const up = await this.transport.upload(file, 'voice');
+      const r = await this.transport.groupChirp({ group_id: g.id, attachment_id: up.id, duration: sec });
+      this.setState({ groupsBusy: '' });
+      this.gkNote(`🔊 Chirped ${g.name} · ${sec}s · everyone on the group page hears it now, ${r.listeners} member${r.listeners === 1 ? '' : 's'} listening elsewhere`);
+    } catch (e) { this.setState({ groupsBusy: '', groupsErr: (e as Error).message || 'That chirp did not send' }); }
+  };
+  private gkPoll = async () => {
+    if (this.transport.name !== 'live') return;
+    try {
+      const r = await this.transport.groupChirpFeed(this._gkLast);
+      const last = Number(r.last) || 0;
+      if (!this._gkLast) { this._gkLast = last; return; }
+      this._gkLast = Math.max(this._gkLast, last);
+      if (Array.isArray(r.chirps) && r.chirps.length) { this._gkQueue.push(...r.chirps); void this.gkPlayNext(); }
+    } catch { /* next tick */ }
+  };
+  private gkPlayNext = async () => {
+    if (this.state.gkPlaying || !this._gkQueue.length) return;
+    const c = this._gkQueue.shift() as GroupChirp;
+    const el = new Audio(c.url); el.preload = 'auto';
+    this._gkAudio = el;
+    const done = () => { this._gkAudio = null; this.setState({ gkPlaying: null, gkNeedTap: false }); void this.gkPlayNext(); };
+    el.onended = done; el.onerror = done;
+    this.setState({ gkPlaying: c, gkNeedTap: false });
+    try { await el.play(); } catch { this.setState({ gkNeedTap: true }); }
+  };
+  private gkTapPlay = () => { const el = this._gkAudio; if (!el) return; void el.play().then(() => this.setState({ gkNeedTap: false })).catch(() => {}); };
 
   /* ---- "… is typing" (owner call 2026-09-07): while the draft has text we tell the server every 4s,
      and stop 6s after the last keystroke or when the draft empties (sending empties it). ---- */
@@ -1067,8 +1183,9 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                         { key: 'chirp', label: 'Chirp', badge: 0 },
                         { key: 'notifs', label: 'Alerts', badge: unread },
                         { key: 'friends', label: 'Friends', badge: 0 },
+                        { key: 'groups', label: 'Groups', badge: 0 },
                       ] as { key: State['tab']; label: string; badge: number }[]).map(t => (
-                        <div key={t.key} onClick={() => { this.scrollBottom(); this.setState({ tab: t.key }); }}
+                        <div key={t.key} onClick={() => { this.scrollBottom(); this.setState({ tab: t.key }); if (t.key === 'groups') void this.loadGroups(); }}
                           style={{ flex: 1, textAlign: 'center', padding: '7px 0', fontSize: 11, fontWeight: 600, borderRadius: 9, cursor: 'pointer', color: s.tab === t.key ? acc.fg : '#7e8a96', background: s.tab === t.key ? acc.c : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, transition: 'background .18s, color .18s' }}>
                           <span>{t.label}</span>
                           {t.badge > 0 && (
@@ -1080,6 +1197,12 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
                     {/* screen content */}
                     <div style={{ height: screen, overflowY: 'auto', padding: '2px 12px 12px', transition: 'height .3s ease' }}>
+                      {s.gkPlaying && (
+                        <div onClick={this.gkTapPlay} role={s.gkNeedTap ? 'button' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 11, marginBottom: 8, cursor: s.gkNeedTap ? 'pointer' : 'default', background: 'linear-gradient(140deg,#123a2a,#0b1f18)', boxShadow: 'inset 0 0 0 1px rgba(0,255,136,.35)' }}>
+                          {s.gkPlaying.by?.avatar ? <img src={s.gkPlaying.by.avatar} alt="" referrerPolicy="no-referrer" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flex: 'none' }} /> : <span style={{ width: 24, height: 24, borderRadius: '50%', background: '#00ff88', flex: 'none' }} />}
+                          <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, color: '#e8edf2', lineHeight: 1.35 }}><b style={{ color: '#00ff88' }}>🔊 {s.gkPlaying.by?.name}</b> chirped in {s.gkPlaying.group}{s.gkNeedTap ? ' — tap to hear it' : ''}</span>
+                        </div>
+                      )}
                       {s.tab === 'messages' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                           {activeThread ? (
@@ -1214,6 +1337,78 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                         </div>
                       )}
 
+                      {s.tab === 'groups' && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <div style={{ color: '#98a3ad', fontSize: 10.5, lineHeight: 1.45 }}>Pick which group channels alert this phone the moment something is posted, and turn on Chirp to hear a group's voice pings wherever you are on the site.</div>
+                          {s.groupsNote && <div style={{ padding: 8, borderRadius: 9, color: acc.c, background: '#0a1117', fontSize: 10, lineHeight: 1.4 }}>{s.groupsNote}</div>}
+                          {s.groupsErr && <div style={{ fontSize: 10, color: '#ff5c7a', textAlign: 'center', padding: '2px 0' }}>{s.groupsErr}</div>}
+                          {s.groups.map(g => {
+                            const rec = s.groupsBusy === `rec:${g.id}`, sending = s.groupsBusy === `send:${g.id}`;
+                            const mode = g.chirpRule?.mode || 'owner', users = g.chirpRule?.users || [];
+                            const pill = (on: boolean, busy: boolean, label: string, onClick: () => void, title: string) => (
+                              <button type="button" disabled={busy} onClick={onClick} title={title} aria-pressed={on}
+                                style={{ border: 0, borderRadius: 999, padding: '5px 9px', fontSize: 9, fontWeight: 700, letterSpacing: .3, whiteSpace: 'nowrap', cursor: busy ? 'default' : 'pointer', background: on ? acc.c : '#131c26', color: on ? acc.fg : '#8b98a5', opacity: busy ? .6 : 1 }}>{label}</button>
+                            );
+                            return (
+                              <div key={`gk-${g.id}`} style={{ padding: '9px 10px', borderRadius: 12, background: '#0a1117', display: 'flex', flexDirection: 'column', gap: 7 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                                  {g.icon ? <img src={g.icon} alt="" referrerPolicy="no-referrer" style={{ width: 28, height: 28, borderRadius: 8, objectFit: 'cover', flex: 'none' }} /> : <span style={{ width: 28, height: 28, borderRadius: 8, background: '#16232e', flex: 'none' }} />}
+                                  <a href={g.url} target="_top" style={{ flex: 1, minWidth: 0, textDecoration: 'none' }}>
+                                    <strong style={{ display: 'block', color: '#e8edf2', fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</strong>
+                                    <small style={{ color: '#7e8a96', fontSize: 9 }}>{g.role}{g.canChirp ? ' · has the mic' : ''}</small>
+                                  </a>
+                                  {pill(g.alertsAll, s.groupsBusy === `${g.id}:0:alerts`, g.alertsAll ? '🔔 All on' : '🔔 All', () => void this.gkToggle(g, 0, 'alerts', !g.alertsAll), 'Alert this phone for every channel in the group')}
+                                  {pill(g.chirp, s.groupsBusy === `${g.id}:0:chirp`, g.chirp ? '🔊 On' : '🔊 Chirp', () => void this.gkToggle(g, 0, 'chirp', !g.chirp), 'Hear this group\'s chirps anywhere on the site')}
+                                </div>
+                                {g.canChirp && (
+                                  <button type="button" disabled={sending}
+                                    onPointerDown={ev => { ev.preventDefault(); ev.currentTarget.setPointerCapture?.(ev.pointerId); void this.gkRecStart(g); }}
+                                    onPointerUp={ev => { ev.preventDefault(); this.gkRecStop(); }} onPointerCancel={() => this.gkRecStop()}
+                                    onKeyDown={ev => { if ((ev.key === ' ' || ev.key === 'Enter') && !ev.repeat) { ev.preventDefault(); ev.stopPropagation(); void this.gkRecStart(g); } }}
+                                    onKeyUp={ev => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); this.gkRecStop(); } }}
+                                    onClick={ev => ev.preventDefault()} aria-label={`Hold to Chirp ${g.name}`}
+                                    style={{ border: 0, borderRadius: 10, padding: '9px 10px', fontSize: 10.5, fontWeight: 700, cursor: 'pointer', background: rec ? '#ff3b5c' : sending ? '#17242a' : 'linear-gradient(140deg,#3d8bfd,#1f5fd0)', color: '#fff', userSelect: 'none', touchAction: 'none' }}>
+                                    {rec ? `● Recording ${s.gkRecSec}s — release to send` : sending ? 'Sending…' : '🎙 Hold to Chirp the whole group'}
+                                  </button>
+                                )}
+                                {g.canManage && (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5, fontSize: 9.5, color: '#98a3ad' }}>
+                                    <span>Who can Chirp:</span>
+                                    {([['owner', 'Only me'], ['staff', 'Admins & analysts'], ['members', 'Everyone'], ['list', 'Pick members']] as [string, string][]).map(([m, label]) => (
+                                      <button key={m} type="button" disabled={s.groupsBusy === `perm:${g.id}`}
+                                        onClick={() => { void this.gkSavePerms(g, m, users); if (m === 'list' && !g.members) void this.loadGroups(true); }}
+                                        style={{ border: 0, borderRadius: 999, padding: '4px 8px', fontSize: 9, fontWeight: 700, cursor: 'pointer', background: mode === m ? acc.c : '#131c26', color: mode === m ? acc.fg : '#8b98a5' }}>{label}</button>
+                                    ))}
+                                    {mode === 'list' && (g.members || []).map(m => {
+                                      const on = users.includes(m.id);
+                                      return (
+                                        <button key={`gkm-${m.id}`} type="button" onClick={() => void this.gkSavePerms(g, 'list', on ? users.filter(x => x !== m.id) : [...users, m.id])}
+                                          style={{ border: '1px solid ' + (on ? acc.c : 'rgba(255,255,255,.12)'), borderRadius: 999, padding: '3px 8px', fontSize: 9, cursor: 'pointer', background: on ? 'rgba(0,255,136,.12)' : 'transparent', color: on ? '#e8edf2' : '#8b98a5' }}>{on ? '✓ ' : ''}{m.name}</button>
+                                      );
+                                    })}
+                                    {mode === 'list' && !g.members && <span>loading members…</span>}
+                                    {mode === 'list' && g.members && !g.members.length && <span>no other members yet</span>}
+                                  </div>
+                                )}
+                                <details>
+                                  <summary style={{ fontSize: 9.5, color: '#98a3ad', cursor: 'pointer' }}>Channels · {g.channels.filter(c => c.alerts).length} of {g.channels.length} alerting this phone</summary>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                                    {g.channels.map(c => (
+                                      <div key={`gkc-${c.id}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span style={{ flex: 1, minWidth: 0, fontSize: 10, color: c.alerts ? '#e8edf2' : '#7e8a96', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.type === 'alerts' ? '🚨 ' : '# '}{c.name}</span>
+                                        {pill(c.alerts, s.groupsBusy === `${g.id}:${c.id}:alerts` || g.alertsAll, c.alerts ? '🔔 on' : '🔕 off', () => void this.gkToggle(g, c.id, 'alerts', !c.own), g.alertsAll ? 'All channels are on for this group' : 'Alert this phone when this channel posts')}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </details>
+                              </div>
+                            );
+                          })}
+                          {s.groupsLoaded && !s.groups.length && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 12 }}>You are not in any groups yet. Join one from the Groups page and it shows up here.</div>}
+                          {!s.groupsLoaded && <div style={{ color: '#7e8a96', fontSize: 10, textAlign: 'center', padding: 12 }}>Loading your groups…</div>}
+                        </div>
+                      )}
+
                       {s.tab === 'notifs' && (s.post || s.postItem) && (() => {
                         const post = s.post; const busy = s.postBusy;
                         const stamp = (d?: string) => d ? new Date(d).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
@@ -1301,7 +1496,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               <div style={{ minWidth: 0, flex: 1 }}>
                                 <div style={{ fontSize: 11.5, fontWeight: 600, color: n.actor ? '#5db9ff' : '#e8edf2', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.title}</div>
                                 <div style={{ fontSize: 11, color: '#7e8a96', lineHeight: 1.45 }}>{n.text}</div>
-                                {(n.link || n.type === 'dm') && <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, marginTop: 4 }}>{n.type === 'dm' ? 'OPEN MESSAGE →' : n.type === 'live' ? 'WATCH LIVE →' : n.type === 'video' ? 'WATCH →' : n.type === 'follow' ? 'VIEW PROFILE →' : n.type === 'news' ? 'READ ON THE LOOP →' : n.type === 'mention' ? 'OPEN THE POST →' : (n.type === 'loop_bucks' || n.type === 'gift') ? 'OPEN WALLET →' : 'VIEW POST →'}</div>}
+                                {(n.link || n.type === 'dm') && <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, marginTop: 4 }}>{n.type === 'dm' ? 'OPEN MESSAGE →' : n.type === 'live' ? 'WATCH LIVE →' : n.type === 'video' ? 'WATCH →' : n.type === 'follow' ? 'VIEW PROFILE →' : n.type === 'news' ? 'READ ON THE LOOP →' : n.type === 'mention' ? 'OPEN THE POST →' : (n.type === 'loop_bucks' || n.type === 'gift') ? 'OPEN WALLET →' : (n.type === 'group_alert' || n.type === 'group_chirp') ? 'OPEN THE GROUP →' : 'VIEW POST →'}</div>}
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginLeft: 'auto', flex: 'none' }}>
                                 <div style={{ fontFamily: mono, fontSize: 8.5, color: '#4a545e' }}>{n.time}</div>

@@ -222,6 +222,13 @@ export function createLoopKickServer(options = {}) {
   app.get('/api/search', (req, res) => proxy(req, res, 'GET', '/sml-mhub/v1/search', req.query));
   app.get('/api/notifications', (req, res) => proxy(req, res, 'GET', '/sml-mhub/v1/notifications'));
   app.post('/api/notifications', (req, res) => proxy(req, res, 'POST', '/sml-mhub/v1/notifications', req.body));
+  // Group alerts + group Chirp inside the phone (owner call 2026-09-10, WordPress mu-plugin sml-group-kick)
+  app.get('/api/groups', (req, res) => proxy(req, res, 'GET', '/sml-group-kick/v1/me', req.query));
+  app.post('/api/groups/sub', (req, res) => proxy(req, res, 'POST', '/sml-group-kick/v1/sub', req.body));
+  app.post('/api/groups/chirp', (req, res) => proxy(req, res, 'POST', '/sml-group-kick/v1/chirp', req.body));
+  app.get('/api/groups/chirp-feed', (req, res) => proxy(req, res, 'GET', '/sml-group-kick/v1/feed', req.query));
+  app.get('/api/groups/chirp-perms', (req, res) => proxy(req, res, 'GET', '/sml-group-kick/v1/chirp-perms', req.query));
+  app.post('/api/groups/chirp-perms', (req, res) => proxy(req, res, 'POST', '/sml-group-kick/v1/chirp-perms', req.body));
   app.get('/api/preferences', (req, res) => proxy(req, res, 'GET', '/sml-loop/v1/preferences'));
   app.post('/api/preferences', (req, res) => proxy(req, res, 'POST', '/sml-loop/v1/preferences', req.body));
   app.get('/api/chirp/settings', (req, res) => proxy(req, res, 'GET', '/sml-loop/v1/chirp/settings'));
