@@ -545,12 +545,16 @@ export function createLoopKickServer(options = {}) {
 
   // Server-side Market Monitor ingest: keep the tape populated across a broad,
   // market-wide universe continuously — independent of who is viewing. The
-  // stocks plan is unlimited, so one ~50-symbol snapshot every 45s (~1.3
-  // calls/min) is trivial. The tape engine gates stocks to market hours; BTC
-  // ingests around the clock. TAPE_SYMBOLS env overrides the default set.
+  // stocks plan is unlimited (see massive-rate-limits), so one ~120-symbol
+  // snapshot every 45s (~2.7 calls/min) is trivial. The tape engine gates
+  // stocks to market hours; BTC ingests around the clock. TAPE_SYMBOLS env
+  // overrides the default set. Default = the site's own scanner universe
+  // (sml_sd_universe_symbols on stockmarketloop.com, so the tape covers
+  // what the Analyst Dashboard scanner shows) plus the original tape roster,
+  // union'd 2026-09-20 — verified in one Massive snapshot call, 121/121 hit.
   const TAPE_UNIVERSE = String(process.env.TAPE_SYMBOLS ||
-    'SPY,QQQ,IWM,DIA,SOXX,BTC,NVDA,TSLA,AAPL,MSFT,AMD,META,AMZN,GOOGL,NFLX,AVGO,MU,SMCI,PLTR,COIN,MSTR,MARA,RIOT,SOFI,HOOD,NIO,F,BAC,INTC,CSCO,DIS,BABA,UBER,SHOP,SNAP,PYPL,ROKU,DKNG,PLUG,IONQ,RIVN,LCID,GME,AMC,TSM,ARM,DELL,CRWD,NET,SNOW')
-    .toUpperCase().replace(/[^A-Z0-9,.\-]/g, '').split(',').filter(Boolean).slice(0, 60);
+    'BTC,AAL,AAPL,ABBV,ABNB,ADBE,AMC,AMD,AMGN,AMZN,ARKK,ARM,AVGO,BA,BABA,BAC,BBAI,BITO,CAT,CCL,CLSK,COIN,COP,COST,CRM,CRWD,CSCO,CVX,DAL,DDOG,DELL,DIA,DIS,DKNG,EEM,F,GLD,GM,GME,GOOGL,GS,HD,HOOD,HYG,IBIT,INTC,IONQ,IWM,JNJ,JPM,LCID,LLY,MA,MARA,MCD,META,MRNA,MS,MSFT,MSTR,MU,NET,NFLX,NIO,NKE,NVDA,ORCL,OXY,PANW,PFE,PLTR,PLUG,PYPL,QQQ,QUBT,RGTI,RIOT,RIVN,ROKU,SBUX,SHOP,SLV,SMCI,SMH,SNAP,SNOW,SOFI,SOUN,SOXL,SOXS,SOXX,SPOT,SPY,SQQQ,T,TGT,TLT,TMUS,TQQQ,TSLA,TSM,UAL,UBER,UNH,USO,UVXY,V,VOO,VTI,VZ,WFC,WMT,XLB,XLE,XLF,XLI,XLK,XLP,XLU,XLV,XLY,XOM')
+    .toUpperCase().replace(/[^A-Z0-9,.\-]/g, '').split(',').filter(Boolean).slice(0, 150);
   let tapeIngestTimer = null;
   if (MASSIVE_KEY && options.tapeIngest !== false) {
     tapeIngestTimer = setInterval(() => { fetchQuoteSet(TAPE_UNIVERSE).catch(() => {}); }, 45000);
