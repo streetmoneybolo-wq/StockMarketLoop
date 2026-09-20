@@ -208,6 +208,29 @@ const S: Record<string, React.CSSProperties> = {}; // populated in render helper
 
 interface Props { initialOpen?: boolean; }
 
+/** Thumbnail overlay for a scheduled stream: counts down to the start, ticking each second. */
+function SchedCountdown({ startsAt, accent }: { startsAt: string; accent: string }) {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const at = Date.parse(startsAt);
+  const left = Number.isFinite(at) ? Math.max(0, at - now) : 0;
+  const sec = Math.floor(left / 1000);
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60;
+  const two = (n: number) => (n < 10 ? '0' : '') + n;
+  const when = Number.isFinite(at) ? new Date(at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  return (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, background: 'linear-gradient(180deg,rgba(3,8,14,.35),rgba(3,8,14,.82))', textAlign: 'center' }}>
+      <span style={{ fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace', fontSize: 8.5, letterSpacing: 1.4, color: '#c9d6e2' }}>{left > 0 ? 'STARTS IN' : 'STARTING NOW'}</span>
+      {left > 0 && (
+        <span style={{ fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace', fontSize: 22, fontWeight: 700, color: accent, fontVariantNumeric: 'tabular-nums', textShadow: '0 0 12px rgba(0,0,0,.6)' }}>
+          {d ? d + 'd ' : ''}{two(h)}:{two(m)}:{two(x)}
+        </span>
+      )}
+      {when && <span style={{ fontSize: 9, color: '#9fb0bf' }}>{left > 0 ? when : 'Tap the title below to open the stream'}</span>}
+    </div>
+  );
+}
+
 export default class LoopKickPhone extends React.Component<Props, State> {
   state: State = {
     open: !!this.props.initialOpen,
@@ -512,7 +535,12 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   };
   /** Play one item in the deck (from the results list or a watch page hand-off). */
   private playWatch = (item: WatchItem, start = 0) => {
-    if (!item.src && !item.ytId) { if (item.url) window.open(item.url, '_blank', 'noopener'); return; }
+    if (!item.src && !item.ytId) {
+      /* a scheduled stream has nothing to play yet: show its thumbnail and the countdown in the deck */
+      if (item.status === 'scheduled' && item.startsAt) { this.setState({ mode: 'watch', watchItem: item, watchStart: 0, playing: false, watchNeedTap: false, watchSec: 0 }); return; }
+      if (item.url) window.open(item.url, '_blank', 'noopener');
+      return;
+    }
     this.setState({ mode: 'watch', watchItem: item, watchStart: start, playing: true, watchNeedTap: false, watchSec: 0 });
   };
   private detachHls() { if (this._hls) { try { this._hls.destroy(); } catch { /* already gone */ } this._hls = null; } }
@@ -939,7 +967,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     else if (type === 'sml-loop-kick:watch') {
       /* a watch page's mini button: keep playing its video or stream here, from where it was */
       const d = event.data as { item?: WatchItem; time?: number };
-      if (d.item && (d.item.src || d.item.ytId)) {
+      if (d.item && (d.item.src || d.item.ytId || (d.item.status === 'scheduled' && d.item.startsAt))) {
         this.playWatch(d.item, Number(d.time) || 0);
         this.goLive();
         try { (event.source as Window).postMessage({ type: 'sml-loop-kick:watch-ack', id: d.item.id }, '*'); } catch { /* the page will retry */ }
@@ -1749,9 +1777,10 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                       const vidSrc = item && item.src ? item.src : '';
                       const ytId = item && !vidSrc && item.ytId ? item.ytId : '';
                       const hasMedia = !!(vidSrc || ytId);
-                      const isLive = !!item && item.kind === 'live';
+                      const isSched = !!item && !hasMedia && item.status === 'scheduled' && !!item.startsAt;
+                      const isLive = !!item && item.kind === 'live' && !isSched;
                       const title = item ? item.title : 'Loop Channel';
-                      const sub = item ? (isLive ? `LIVE · ${item.creator || 'Loop Desk'}` : `${item.creator || 'Loop Channel'}${item.date ? ' · ' + item.date : ''}`) : 'Videos and live streams from the Loop Channel';
+                      const sub = item ? (isSched ? `SCHEDULED · ${item.creator || 'Loop Desk'}` : isLive ? `LIVE · ${item.creator || 'Loop Desk'}` : `${item.creator || 'Loop Channel'}${item.date ? ' · ' + item.date : ''}`) : 'Videos and live streams from the Loop Channel';
                       const q = s.watchQ.trim();
                       const rows: WatchItem[] = wd ? (q ? [...wd.live, ...wd.videos] : wd.live) : [];
                       const fmt = (n?: number) => { const t = Math.max(0, Math.round(n || 0)); const m = Math.floor(t / 60), sec = t % 60; return t ? `${m}:${sec < 10 ? '0' : ''}${sec}` : ''; };
@@ -1768,7 +1797,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               allow="autoplay; encrypted-media; picture-in-picture" title="Loop live stream"
                               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, background: '#000' }} />
                           )}
-                          {!hasMedia && (
+                          {isSched && <SchedCountdown startsAt={item!.startsAt!} accent={acc.c} />}
+                          {!hasMedia && !isSched && (
                             <div style={{ padding: '0 18px', textAlign: 'center', fontSize: 10.5, lineHeight: 1.5, color: '#dfe7ee' }}>
                               {wd ? 'Search below for a Loop Channel video or live stream, or tap the mini button on any watch page.' : 'Loading the Loop Channel…'}
                             </div>
@@ -1790,6 +1820,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                             <span style={{ position: 'absolute', top: 7, left: 8, zIndex: 3, display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: '#ff5c7a' }}>
                               <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#ff3b5c' }} />LIVE
                             </span>
+                          ) : isSched ? (
+                            <span style={{ position: 'absolute', top: 7, left: 8, zIndex: 3, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: '#ffd76a' }}>SCHEDULED</span>
                           ) : item ? (
                             <span style={{ position: 'absolute', top: 7, left: 8, zIndex: 3, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,0,0,.6)', fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: '#5c6771' }}>LOOP CHANNEL</span>
                           ) : null}

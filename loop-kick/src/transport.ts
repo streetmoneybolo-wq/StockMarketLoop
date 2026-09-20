@@ -333,6 +333,8 @@ export interface WatchItem {
   duration?: number;
   description?: string;
   status?: string;
+  /** scheduled stream only: ISO start time, drives the countdown over the poster */
+  startsAt?: string;
   /** hand-off from a watch page: resume here (seconds) */
   time?: number;
 }
