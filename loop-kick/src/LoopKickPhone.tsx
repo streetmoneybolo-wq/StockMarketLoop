@@ -6,6 +6,8 @@
  * component; state keys, mode names, and style values are kept verbatim so
  * the rendered device matches the approved design.
  */
+import { apiUrl, trustedParentOrigin } from './base';
+import { PushAlertsRow } from './push';
 import React from 'react';
 import { BootstrapData, createTransport, fetchWatch, FeedPost, GroupChirp, KickGroup, Person, SiteNotification, ThreadSummary, Transport, WatchData, WatchItem, WireMessage } from './transport';
 import { LiveChirpClient } from './liveChirp';
@@ -62,7 +64,7 @@ function stripLead(message: string, leads: Array<string | undefined>): string {
   }
   return m;
 }
-const WM_LOGO = '/loop-mark.png';
+const WM_LOGO = apiUrl('/loop-mark.png');
 /* Fast open (owner call 2026-09-06). The bridge warms this frame with ?prewarm=1 before the
    member clicks: we load the shell and paint the last bootstrap snapshot, but touch WordPress
    only once the parent says the popup opened; closing it pauses polling. */
@@ -88,8 +90,8 @@ function writeSnapshot(data: BootstrapData) {
 const PEER_NAME = typeof window !== 'undefined' ? (window.LOOP_KICK_CONFIG?.peerName || 'Loop') : 'Loop';
 
 const CUSTOM_EMOJIS: Record<string, string> = {
-  free_green: '/emojis/free-green.png',
-  free_red: '/emojis/free-red.png',
+  free_green: apiUrl('/emojis/free-green.png'),
+  free_red: apiUrl('/emojis/free-red.png'),
 };
 
 function customEmojiText(text: string): React.ReactNode[] {
@@ -950,6 +952,19 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   private _onParentMessage = (event: MessageEvent) => {
     if (event.source !== window.parent) return;
+    {
+      const d = event.data as { type?: string; token?: string } | null;
+      if (d && d.type === 'sml-loop-kick:auth') {
+        if (!trustedParentOrigin(event.origin)) return;
+        const token = String(d.token || '');
+        if (!/^[a-f0-9]{64}$/.test(token)) return;
+        const cfg = window.LOOP_KICK_CONFIG || (window.LOOP_KICK_CONFIG = { transport: 'live' } as never);
+        const hadToken = !!cfg.sessionToken;
+        cfg.sessionToken = token; // mutate in place: the live transport captured this object
+        if (!hadToken) { this.transport = createTransport(); this.goLive(); }
+        return;
+      }
+    }
     const type = event.data && (event.data as { type?: string }).type;
     /* a tap anywhere on the host page (outside the phone) counts as the gesture phones demand before audio plays */
     if (type === 'sml-loop-kick:tap') { if (this.state.gkLive.some(l => l.needTap)) this.live.tapToHear(); if (this.state.gkNeedTap) this.gkTapPlay(); return; }
@@ -1611,6 +1626,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                       })()}
                       {s.tab === 'notifs' && !s.post && !s.postItem && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <PushAlertsRow />
                           {s.notifs.length > 0 && (
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, padding: '0 2px 2px' }}>
                               {s.notifs.some(n => n.unread) && (

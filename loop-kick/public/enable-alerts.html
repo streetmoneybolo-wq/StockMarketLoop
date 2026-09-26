@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LOOP-KICK phone alerts</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#04070c;color:#cfdbe8;font:400 14px/1.6 system-ui,sans-serif}
+  .card{max-width:420px;margin:24px;padding:26px 24px;background:#0b1119;border:1px solid #1b2837;border-radius:16px;text-align:center}
+  h1{font-size:16px;margin:0 0 10px;color:#fff}
+  button{margin-top:16px;background:#22d97a;color:#04170d;border:0;border-radius:10px;padding:12px 20px;font:700 13px/1 system-ui,sans-serif;cursor:pointer}
+  button[disabled]{opacity:.5;cursor:default}
+  .hint{margin-top:14px;font-size:12px;color:#7e92a8}
+  .ok{color:#9fe8c0}
+  .err{color:#ff8ba0}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Phone alerts for LOOP-KICK</h1>
+  <p id="msg">Turn this device's push notifications on — every alert that lands in LOOP-KICK will reach you here, and tapping one opens it.</p>
+  <button id="go">Enable on this device</button>
+  <p class="hint" id="hint"></p>
+</div>
+<script>
+(function () {
+  var msg = document.getElementById('msg');
+  var hint = document.getElementById('hint');
+  var go = document.getElementById('go');
+  var token = new URLSearchParams(location.hash.slice(1)).get('session') || '';
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+
+  var isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  var standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+  function fail(text) { msg.className = 'err'; msg.textContent = text; go.disabled = false; }
+  function done(text) { msg.className = 'ok'; msg.textContent = text; go.textContent = 'Enabled'; go.disabled = true; }
+
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    if (isIos && !standalone) {
+      msg.textContent = 'One step first: tap the Share button in Safari and choose "Add to Home Screen", then open LOOP-KICK Alerts from your Home Screen and enable alerts there. iPhones only allow push for Home-Screen apps.';
+      go.style.display = 'none';
+    } else {
+      fail('This browser does not support web push.');
+    }
+    return;
+  }
+  if (isIos && !standalone) {
+    msg.textContent = 'iPhone step first: tap Share and "Add to Home Screen", then open this page from the new Home-Screen icon and enable alerts.';
+    hint.textContent = 'iOS only delivers push notifications to Home-Screen apps (iOS 16.4+).';
+  }
+  if (!token) { fail('This setup link has expired — reopen it from LOOP-KICK’s Alerts tab.'); go.disabled = true; return; }
+
+  function b64ToU8(base64) {
+    var pad = '='.repeat((4 - (base64.length % 4)) % 4);
+    var raw = atob((base64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    var arr = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+    return arr;
+  }
+
+  go.onclick = function () {
+    go.disabled = true;
+    msg.className = ''; msg.textContent = 'Setting up…';
+    fetch('/api/push/status', { headers: { Authorization: 'Bearer ' + token } })
+      .then(function (r) { return r.json(); })
+      .then(function (status) {
+        if (!status || !status.enabled || !status.vapidPublicKey) throw new Error('Push is not configured on the server yet.');
+        return navigator.serviceWorker.register('/push-sw.js').then(function (reg) {
+          return Notification.requestPermission().then(function (perm) {
+            if (perm !== 'granted') throw new Error('Notifications were not allowed. Enable them in your browser settings and try again.');
+            return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(status.vapidPublicKey) });
+          });
+        });
+      })
+      .then(function (subscription) {
+        return fetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subscription: subscription.toJSON() }),
+        }).then(function (r) { if (!r.ok) throw new Error('The subscription could not be saved.'); });
+      })
+      .then(function () { done('Done — this device now gets LOOP-KICK alerts.'); })
+      .catch(function (error) { fail(String(error && error.message || 'Setup failed.')); });
+  };
+})();
+</script>
+</body>
+</html>

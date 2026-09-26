@@ -41,6 +41,7 @@
     "@radix-ui/react-toggle-group": "^1.1.19",
     "@radix-ui/react-tooltip": "^1.2.16",
     "better-sqlite3": "^12.2.0",
+    "web-push": "^3.6.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

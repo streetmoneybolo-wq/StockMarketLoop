@@ -7,6 +7,7 @@ import express from 'express';
 
 import { createTapeEngine } from './tape.mjs';
 import { mountChirpLive } from './chirpLive.mjs';
+import { createPushService, mountPushSend, mountPushMember } from './push.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_SESSION_URL = 'https://stockmarketloop.com/wp-json/sml-loop-kick/v1/session';
@@ -112,6 +113,12 @@ export function createLoopKickServer(options = {}) {
   }
 
   app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://stockmarketloop.com https://www.stockmarketloop.com https://*.discordsays.com");
+    next();
+  });
+  const pushService = options.pushService || createPushService({ env: process.env });
+  mountPushSend(app, pushService); // before the JSON parser: the HMAC needs raw bytes
 
   // Upload must receive the untouched multipart body before the JSON parser.
   app.post('/api/upload', express.raw({ type: () => true, limit: '12mb' }), async (req, res) => {
@@ -142,6 +149,7 @@ export function createLoopKickServer(options = {}) {
   });
 
   app.use(express.json({ limit: '64kb' }));
+  mountPushMember(app, pushService, requireAuth);
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, service: 'loop-kick', source: 'wordpress-messenger' });

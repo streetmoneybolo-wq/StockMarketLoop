@@ -1,3 +1,4 @@
+import { apiUrl } from './base';
 /**
  * Group Chirp LIVE — listener side for the phone (owner call 2026-09-10).
  *
@@ -24,14 +25,14 @@ export class ChirpLiveListener {
 
   private headers(json: boolean): Record<string, string> { const h: Record<string, string> = { Authorization: `Bearer ${this.token()}` }; if (json) h['Content-Type'] = 'application/json'; return h; }
   private async post(path: string, body: Record<string, unknown>): Promise<any> {
-    const r = await fetch(`/api/chirp-live/${path}`, { method: 'POST', headers: this.headers(true), body: JSON.stringify({ ...body, client: CLIENT }) });
+    const r = await fetch(apiUrl(`/api/chirp-live/${path}`), { method: 'POST', headers: this.headers(true), body: JSON.stringify({ ...body, client: CLIENT }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { const e = new Error(j.error || `HTTP ${r.status}`) as Error & { status?: number; rejoin?: boolean }; e.status = r.status; e.rejoin = !!j.rejoin; throw e; }
     return j;
   }
   private async iceConfig(): Promise<RTCConfiguration> {
     if (this.ice && Date.now() - this.iceAt < 240000) return this.ice;
-    try { const j = await fetch('/api/ice', { cache: 'no-store' }).then(r => r.json()); this.ice = { iceServers: j?.iceServers || [{ urls: 'stun:stun.l.google.com:19302' }] }; }
+    try { const j = await fetch(apiUrl('/api/ice'), { cache: 'no-store' }).then(r => r.json()); this.ice = { iceServers: j?.iceServers || [{ urls: 'stun:stun.l.google.com:19302' }] }; }
     catch { this.ice = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }; }
     this.iceAt = Date.now();
     return this.ice;
@@ -103,7 +104,7 @@ export class ChirpLiveListener {
     r.polling = true;
     try {
       r.abort = new AbortController();
-      const res = await fetch(`/api/chirp-live/poll?group=${r.gid}&wait=1&client=${CLIENT}`, { headers: this.headers(false), signal: r.abort.signal });
+      const res = await fetch(apiUrl(`/api/chirp-live/poll?group=${r.gid}&wait=1&client=${CLIENT}`), { headers: this.headers(false), signal: r.abort.signal });
       const j = await res.json().catch(() => ({}));
       r.polling = false;
       if (r.stopped) return;

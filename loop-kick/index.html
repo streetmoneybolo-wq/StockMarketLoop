@@ -22,6 +22,31 @@
           send: "/api/messages/send",
         },
       };
+      (function () {
+        var framed = window.parent !== window;
+        var trusted = function (origin) {
+          if (origin === 'https://stockmarketloop.com' || origin === 'https://www.stockmarketloop.com') return true;
+          if (origin === window.location.origin) return true;
+          return /^https:\/\/[0-9]+\.discordsays\.com$/i.test(origin);
+        };
+        window.addEventListener('message', function (event) {
+          if (event.source !== window.parent || !trusted(event.origin)) return;
+          var d = event.data || {};
+          if (d.type === 'sml-loop-kick:auth' && /^[a-f0-9]{64}$/.test(String(d.token || ''))) {
+            window.LOOP_KICK_CONFIG.sessionToken = String(d.token);
+          }
+        });
+        if (framed && !window.LOOP_KICK_CONFIG.sessionToken) {
+          var announce = function () {
+            var target = '*';
+            try { if (document.referrer) target = new URL(document.referrer).origin; } catch (e) {}
+            try { window.parent.postMessage({ type: 'sml-loop-kick:ready', version: 1 }, target); } catch (e) {}
+          };
+          announce();
+          setTimeout(announce, 400);
+          setTimeout(announce, 1500);
+        }
+      })();
     </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

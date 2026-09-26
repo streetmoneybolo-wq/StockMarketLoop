@@ -1,3 +1,5 @@
+import { apiUrl, notifyAuthNeeded } from './base';
+
 export interface Person {
   userId: number;
   name: string;
@@ -197,7 +199,8 @@ function liveTransport(cfg: LoopKickConfig): Transport {
   });
 
   async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-    const response = await fetch(path, { ...options, headers: { ...headers(!!options.body && !(options.body instanceof FormData)), ...(options.headers || {}) } });
+    const response = await fetch(apiUrl(path), { ...options, headers: { ...headers(!!options.body && !(options.body instanceof FormData)), ...(options.headers || {}) } });
+    if (response.status === 401) notifyAuthNeeded();
     const body = await response.json().catch(() => ({}));
     if (!response.ok || body?.error) { const err = new Error(body?.error || body?.message || `Messenger returned ${response.status}`) as Error & { status?: number }; err.status = response.status; throw err; }
     return body as T;
@@ -348,7 +351,7 @@ export interface WatchData {
  *  /watch/ videos + live streams) with the desk's viewer count. */
 export async function fetchWatch(q = ''): Promise<WatchData | null> {
   try {
-    const response = await fetch('/api/watch' + (q ? '?q=' + encodeURIComponent(q) : ''), { signal: AbortSignal.timeout(9000) });
+    const response = await fetch(apiUrl('/api/watch' + (q ? '?q=' + encodeURIComponent(q) : '')), { signal: AbortSignal.timeout(9000) });
     if (!response.ok) return null;
     const body = (await response.json()) as WatchData;
     return body && Array.isArray(body.videos) ? body : null;
