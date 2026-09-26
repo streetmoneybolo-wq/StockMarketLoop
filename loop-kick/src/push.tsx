@@ -10,8 +10,13 @@ import { apiUrl, inDiscordProxy, postToParent } from './base';
  */
 type PushState = 'unknown' | 'off' | 'on' | 'unsupported';
 
+function bearer(): Record<string, string> {
+  return { Authorization: `Bearer ${String(window.LOOP_KICK_CONFIG?.sessionToken || '')}` };
+}
+
 export function PushAlertsRow(): React.ReactElement | null {
   const [state, setState] = React.useState<PushState>('unknown');
+  const [devices, setDevices] = React.useState(0);
 
   React.useEffect(() => {
     let alive = true;
@@ -19,7 +24,7 @@ export function PushAlertsRow(): React.ReactElement | null {
     if (!token) { setState('unknown'); return; }
     fetch(apiUrl('/api/push/status'), { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
-      .then(j => { if (alive) setState(j && j.enabled ? (j.subscribed ? 'on' : 'off') : 'unsupported'); })
+      .then(j => { if (!alive) return; setDevices(Number(j?.devices) || 0); setState(j && j.enabled ? (j.subscribed ? 'on' : 'off') : 'unsupported'); })
       .catch(() => { if (alive) setState('unknown'); });
     return () => { alive = false; };
   }, []);
@@ -37,15 +42,24 @@ export function PushAlertsRow(): React.ReactElement | null {
     try { window.open(target, '_blank', 'noopener'); } catch { /* blocked */ }
   };
 
+  const turnOffEverywhere = () => {
+    fetch(apiUrl('/api/push/unsubscribe'), { method: 'POST', headers: { ...bearer(), 'Content-Type': 'application/json' }, body: '{}' })
+      .then(() => { setDevices(0); setState('off'); })
+      .catch(() => { /* try again later */ });
+  };
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', borderRadius: 12, background: 'rgba(34,217,122,.08)', border: '1px solid rgba(34,217,122,.25)' }}>
       <div style={{ fontSize: 10.5, lineHeight: 1.45, color: '#cfe4d8' }}>
         <b style={{ display: 'block', fontSize: 11, color: '#9fe8c0' }}>Phone alerts {state === 'on' ? 'are on' : ''}</b>
-        {state === 'on' ? 'This device gets a push when something lands here.' : 'Get these alerts as push notifications on your phone.'}
+        {state === 'on' ? `On for ${devices} device${devices === 1 ? '' : 's'}. ` : 'Get these alerts as push notifications on your phone.'}
+        {state === 'on' && (
+          <button type="button" onClick={turnOffEverywhere} style={{ border: 0, background: 'none', padding: 0, color: '#ff8ba0', fontSize: 10, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}>Turn off everywhere</button>
+        )}
       </div>
       <button type="button" onClick={openSetup}
         style={{ border: 0, borderRadius: 999, padding: '7px 12px', fontSize: 9.5, fontWeight: 700, letterSpacing: .4, cursor: 'pointer', background: state === 'on' ? '#0e1721' : '#22d97a', color: state === 'on' ? '#cfe4f7' : '#04170d', whiteSpace: 'nowrap' }}>
-        {state === 'on' ? 'Manage' : 'Enable'}
+        {state === 'on' ? 'Add device' : 'Enable'}
       </button>
     </div>
   );

@@ -17,12 +17,15 @@ export function apiUrl(path: string): string {
   return BASE + path;
 }
 
+/** Our own Discord Activities (Academy, Connect). Any Discord app is a numeric
+ *  *.discordsays.com subdomain, so trust is pinned by application id. */
+export const ACTIVITY_APP_IDS = ['1551336038713139370', '1537698927401377894'];
+
 /** Origins allowed to hand this phone its session over postMessage. */
 export function trustedParentOrigin(origin: string): boolean {
   if (!origin) return false;
   if (origin === 'https://stockmarketloop.com' || origin === 'https://www.stockmarketloop.com') return true;
-  if (typeof location !== 'undefined' && origin === location.origin) return true;
-  return /^https:\/\/[0-9]+\.discordsays\.com$/i.test(origin);
+  return ACTIVITY_APP_IDS.some(id => origin === `https://${id}.discordsays.com`);
 }
 
 function parentTargetOrigin(): string {

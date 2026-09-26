@@ -1,0 +1,14 @@
+{
+  "name": "LOOP-KICK Alerts",
+  "short_name": "LOOP-KICK",
+  "display": "standalone",
+  "background_color": "#04070c",
+  "theme_color": "#04070c",
+  "icons": [
+    {
+      "src": "/loop-mark.png",
+      "sizes": "any",
+      "type": "image/png"
+    }
+  ]
+}

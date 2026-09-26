@@ -26,8 +26,7 @@
         var framed = window.parent !== window;
         var trusted = function (origin) {
           if (origin === 'https://stockmarketloop.com' || origin === 'https://www.stockmarketloop.com') return true;
-          if (origin === window.location.origin) return true;
-          return /^https:\/\/[0-9]+\.discordsays\.com$/i.test(origin);
+          return origin === 'https://1551336038713139370.discordsays.com' || origin === 'https://1537698927401377894.discordsays.com';
         };
         window.addEventListener('message', function (event) {
           if (event.source !== window.parent || !trusted(event.origin)) return;

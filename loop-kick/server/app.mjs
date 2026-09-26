@@ -9,6 +9,16 @@ import { createTapeEngine } from './tape.mjs';
 import { mountChirpLive } from './chirpLive.mjs';
 import { createPushService, mountPushSend, mountPushMember } from './push.mjs';
 
+/* Who may frame the phone: the site (and creator subdomains) for the popup, and
+   ONLY our own Discord Activities — pinned by application id, because any Discord
+   app is a numeric *.discordsays.com subdomain. discord.com is listed because
+   frame-ancestors checks every ancestor and the Activity sits inside discord.com. */
+const ACTIVITY_APP_IDS = String(process.env.DISCORD_ACTIVITY_APP_IDS || '1551336038713139370,1537698927401377894')
+  .split(',').map((id) => id.trim()).filter((id) => /^\d{15,24}$/.test(id));
+const FRAME_ANCESTORS = 'frame-ancestors https://stockmarketloop.com https://*.stockmarketloop.com '
+  + ACTIVITY_APP_IDS.map((id) => `https://${id}.discordsays.com`).join(' ')
+  + ' https://discord.com https://*.discord.com https://*.discordapp.com';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_SESSION_URL = 'https://stockmarketloop.com/wp-json/sml-loop-kick/v1/session';
 const DEFAULT_GATEWAY_URL = 'https://stockmarketloop.com/wp-json/sml-loop-kick/v1/gateway';
@@ -114,7 +124,7 @@ export function createLoopKickServer(options = {}) {
 
   app.disable('x-powered-by');
   app.use((req, res, next) => {
-    res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://stockmarketloop.com https://www.stockmarketloop.com https://*.discordsays.com");
+    res.setHeader('Content-Security-Policy', FRAME_ANCESTORS);
     next();
   });
   const pushService = options.pushService || createPushService({ env: process.env });
@@ -728,6 +738,9 @@ export function createLoopKickServer(options = {}) {
 
   if (fs.existsSync(distDir)) {
     app.use(express.static(distDir, { index: false, maxAge: '1h' }));
+    /* the site popup loads the phone at /loop-kick/ — with relative asset URLs
+       its bundle resolves under /loop-kick/assets/…, so serve dist there too */
+    app.use('/loop-kick', express.static(distDir, { index: false, maxAge: '1h' }));
     app.use((req, res, next) => {
       if (req.method === 'GET' && req.accepts('html')) return res.sendFile(path.join(distDir, 'index.html'));
       return next();

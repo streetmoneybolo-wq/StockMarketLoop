@@ -695,6 +695,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   private _live = false;
   private _hasSnapshot = false;
   private _chirpTick: (() => void) | null = null;
+  private _authToken = String((typeof window !== 'undefined' && window.LOOP_KICK_CONFIG?.sessionToken) || '');
   private goLive = () => {
     if (this._live) return;
     this._live = true;
@@ -958,10 +959,17 @@ export default class LoopKickPhone extends React.Component<Props, State> {
         if (!trustedParentOrigin(event.origin)) return;
         const token = String(d.token || '');
         if (!/^[a-f0-9]{64}$/.test(token)) return;
+        if (token === this._authToken) return;
+        const first = !this._authToken;
+        this._authToken = token;
         const cfg = window.LOOP_KICK_CONFIG || (window.LOOP_KICK_CONFIG = { transport: 'live' } as never);
-        const hadToken = !!cfg.sessionToken;
-        cfg.sessionToken = token; // mutate in place: the live transport captured this object
-        if (!hadToken) { this.transport = createTransport(); this.goLive(); }
+        cfg.sessionToken = token; // mutate in place: transport + chirp-live read it per request
+        if (first) {
+          /* the boot bootstrap ran without a session and 401'd — run it again now */
+          this.pauseLive();
+          if (!PREWARM || this.state.open) this.goLive();
+        }
+        /* refreshes need nothing more: every poll re-reads the token */
         return;
       }
     }

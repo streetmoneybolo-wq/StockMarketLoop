@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LOOP-KICK phone alerts</title>
+<link rel="manifest" href="/alerts.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="LOOP-KICK">
+<link rel="apple-touch-icon" href="/loop-mark.png">
 <style>
   body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#04070c;color:#cfdbe8;font:400 14px/1.6 system-ui,sans-serif}
   .card{max-width:420px;margin:24px;padding:26px 24px;background:#0b1119;border:1px solid #1b2837;border-radius:16px;text-align:center}
@@ -28,17 +32,18 @@
   var hint = document.getElementById('hint');
   var go = document.getElementById('go');
   var token = new URLSearchParams(location.hash.slice(1)).get('session') || '';
-  try { history.replaceState(null, '', location.pathname); } catch (e) {}
-
   var isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   var standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  /* iPhone Safari must KEEP the fragment: Add to Home Screen saves this exact URL,
+     and the Home-Screen app needs the session to finish setup */
+  if (!(isIos && !standalone)) { try { history.replaceState(null, '', location.pathname); } catch (e) {} }
 
   function fail(text) { msg.className = 'err'; msg.textContent = text; go.disabled = false; }
   function done(text) { msg.className = 'ok'; msg.textContent = text; go.textContent = 'Enabled'; go.disabled = true; }
 
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     if (isIos && !standalone) {
-      msg.textContent = 'One step first: tap the Share button in Safari and choose "Add to Home Screen", then open LOOP-KICK Alerts from your Home Screen and enable alerts there. iPhones only allow push for Home-Screen apps.';
+      msg.textContent = 'One step first: tap the Share button in Safari and choose "Add to Home Screen", then open LOOP-KICK from your Home Screen right away and enable alerts there. iPhones only allow push for Home-Screen apps.';
       go.style.display = 'none';
     } else {
       fail('This browser does not support web push.');
@@ -46,10 +51,15 @@
     return;
   }
   if (isIos && !standalone) {
-    msg.textContent = 'iPhone step first: tap Share and "Add to Home Screen", then open this page from the new Home-Screen icon and enable alerts.';
+    msg.textContent = 'iPhone step first: tap Share and "Add to Home Screen", then open the new LOOP-KICK icon right away and enable alerts there.';
     hint.textContent = 'iOS only delivers push notifications to Home-Screen apps (iOS 16.4+).';
   }
-  if (!token) { fail('This setup link has expired — reopen it from LOOP-KICK’s Alerts tab.'); go.disabled = true; return; }
+  if (!token) {
+    fail(standalone
+      ? 'This setup link expired before it was used. Open LOOP-KICK in Safari, tap Enable in the Alerts tab again, add it to your Home Screen and open it right away.'
+      : 'This setup link has expired — reopen it from LOOP-KICK’s Alerts tab.');
+    go.disabled = true; return;
+  }
 
   function b64ToU8(base64) {
     var pad = '='.repeat((4 - (base64.length % 4)) % 4);
