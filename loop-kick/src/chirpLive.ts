@@ -21,7 +21,12 @@ export class ChirpLiveListener {
   private rooms = new Map<number, Room>();
   private ice: RTCConfiguration | null = null;
   private iceAt = 0;
-  constructor(private token: () => string, private onChange: (states: LiveRoomState[]) => void) {}
+  private token: () => string;
+  private onChange: (states: LiveRoomState[]) => void;
+  constructor(token: () => string, onChange: (states: LiveRoomState[]) => void) {
+    this.token = token;
+    this.onChange = onChange;
+  }
 
   private headers(json: boolean): Record<string, string> { const h: Record<string, string> = { Authorization: `Bearer ${this.token()}` }; if (json) h['Content-Type'] = 'application/json'; return h; }
   private async post(path: string, body: Record<string, unknown>): Promise<any> {

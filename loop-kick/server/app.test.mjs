@@ -37,6 +37,7 @@ test('bootstrap combines the existing messenger services', async t => {
   assert.equal(body.identity.wpUserId, 7);
   assert.deepEqual(body.threads.threads, []);
   assert.deepEqual(new Set(calls.map(call => call.route)), new Set([
+    '/sml-loop-kick/v1/bootstrap',
     '/sml-loop/v1/threads', '/sml-mhub/v1/people', '/sml-mhub/v1/notifications',
     '/sml-loop/v1/preferences', '/sml-loop/v1/chirp/settings', '/sml-loop/v1/chirp/incoming',
   ]));
