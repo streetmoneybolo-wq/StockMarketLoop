@@ -16,6 +16,16 @@ services:
         value: production
       - key: LOOP_KICK_DB_PATH
         value: /var/data/loop-kick.sqlite
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false
+      - key: SML_PUSH_SECRET
+        sync: false
+      - key: SML_SITE_URL
+        value: https://stockmarketloop.com
     disk:
       name: loop-kick-data
       mountPath: /var/data
