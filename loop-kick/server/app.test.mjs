@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createLoopKickServer } from './app.mjs';
+import { createLoopKickServer, mediaHostAllowed } from './app.mjs';
 
 async function runningService() {
   const calls = [];
@@ -70,4 +70,62 @@ test('messenger endpoints reject unauthenticated callers', async t => {
   t.after(() => service.close());
   assert.equal((await fetch(`${base}/api/bootstrap`)).status, 401);
   assert.equal((await fetch(`${base}/api/threads`)).status, 401);
+});
+
+test('the media relay only fetches allow-listed hosts and only hands back image, audio and video', async t => {
+  assert.equal(mediaHostAllowed('stockmarketloop.com'), true);
+  assert.equal(mediaHostAllowed('www.stockmarketloop.com'), true);
+  assert.equal(mediaHostAllowed('grandmasterobi.stockmarketloop.com'), true);
+  assert.equal(mediaHostAllowed('secure.gravatar.com'), true);
+  assert.equal(mediaHostAllowed('i0.wp.com'), true);
+  assert.equal(mediaHostAllowed('i.ytimg.com'), true);
+  assert.equal(mediaHostAllowed('evil.example'), false);
+  assert.equal(mediaHostAllowed('stockmarketloop.com.evil.example'), false);
+  assert.equal(mediaHostAllowed('notstockmarketloop.com'), false);
+
+  const fetched = [];
+  const png = Buffer.from('89504e470d0a1a0a', 'hex');
+  const mediaFetch = async (url, init) => {
+    fetched.push({ url, range: init.headers.range || '' });
+    if (url.endsWith('/page.html')) return new Response('<html>', { status: 200, headers: { 'content-type': 'text/html' } });
+    if (url.endsWith('/missing.png')) return new Response('nope', { status: 404, headers: { 'content-type': 'text/plain' } });
+    if (url.endsWith('/clip.mp4')) return new Response(Buffer.alloc(10, 1), { status: 206, headers: { 'content-type': 'video/mp4', 'content-range': 'bytes 0-9/100', 'accept-ranges': 'bytes', 'content-length': '10' } });
+    return new Response(png, { status: 200, headers: { 'content-type': 'image/png', 'content-length': String(png.length), etag: '"abc"' } });
+  };
+  const service = createLoopKickServer({ distDir: '__missing__', gateway: async () => ({}), verifySession: async () => null, mediaFetch });
+  t.after(() => service.close());
+  await new Promise(resolve => service.server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${service.server.address().port}`;
+  const relay = (u, headers = {}) => fetch(`${base}/api/media?u=${encodeURIComponent(u)}`, { headers });
+
+  assert.equal((await relay('not a url')).status, 400);
+  assert.equal((await relay('https://evil.example/x.png')).status, 403);
+  assert.equal((await relay('http://stockmarketloop.com/x.png')).status, 403, 'https only');
+  assert.equal(fetched.length, 0, 'nothing is fetched for a refused host');
+
+  const image = await relay('https://stockmarketloop.com/wp-content/uploads/2026/10/chart.png');
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get('content-type'), 'image/png');
+  assert.equal(image.headers.get('etag'), '"abc"');
+  assert.equal(image.headers.get('cache-control'), 'public, max-age=3600');
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
+
+  assert.equal((await relay('https://stockmarketloop.com/page.html')).status, 415, 'an html page is not media');
+  assert.equal((await relay('https://stockmarketloop.com/missing.png')).status, 404);
+
+  const clip = await relay('https://stockmarketloop.com/wp-content/uploads/clip.mp4', { range: 'bytes=0-9' });
+  assert.equal(clip.status, 206);
+  assert.equal(clip.headers.get('content-range'), 'bytes 0-9/100');
+  assert.equal(fetched.at(-1).range, 'bytes=0-9', 'the Range header reaches the site so video can seek');
+  assert.equal((await clip.arrayBuffer()).byteLength, 10);
+});
+
+test('the media relay never becomes an open proxy for arbitrary content types or sizes', async t => {
+  const mediaFetch = async () => new Response('x', { status: 200, headers: { 'content-type': 'video/mp4', 'content-length': String(41 * 1024 * 1024) } });
+  const service = createLoopKickServer({ distDir: '__missing__', gateway: async () => ({}), verifySession: async () => null, mediaFetch });
+  t.after(() => service.close());
+  await new Promise(resolve => service.server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${service.server.address().port}`;
+  const r = await fetch(`${base}/api/media?u=${encodeURIComponent('https://stockmarketloop.com/huge.mp4')}`);
+  assert.equal(r.status, 413);
 });

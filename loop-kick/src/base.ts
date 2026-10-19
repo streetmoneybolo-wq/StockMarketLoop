@@ -46,3 +46,22 @@ export function notifyAuthNeeded(): void {
   lastAuthNudge = now;
   postToParent({ type: 'sml-loop-kick:auth-needed', version: 1 });
 }
+
+/** Inside Discord the Activity's Content Security Policy lets images, audio and video load only from the
+ *  Activity's own proxy origin, so everything the phone shows from the site (attachments, avatars, posters,
+ *  chirps, mp4 videos) is fetched through our /api/media relay instead. Outside Discord the URL is untouched. */
+export function mediaUrl(url?: string | null): string {
+  const raw = String(url || '');
+  if (!inDiscordProxy || !/^https?:\/\//i.test(raw)) return raw;
+  try { if (new URL(raw).origin === location.origin) return raw; } catch { return raw; }
+  return apiUrl('/api/media?u=' + encodeURIComponent(raw));
+}
+
+/** Open a page outside the phone. Inside Discord a window cannot be opened from the sandbox, so the host
+ *  (the Academy or the LOOP-KICK Activity) is asked to open it through Discord's external-link prompt. */
+export function openOutside(url?: string | null): void {
+  const target = String(url || '');
+  if (!/^https?:\/\//i.test(target)) return;
+  if (inDiscordProxy) { postToParent({ type: 'sml-loop-kick:external', version: 1, url: target }); return; }
+  try { window.open(target, '_blank', 'noopener'); } catch { /* popup blocked */ }
+}
