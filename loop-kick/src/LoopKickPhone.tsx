@@ -6,7 +6,7 @@
  * component; state keys, mode names, and style values are kept verbatim so
  * the rendered device matches the approved design.
  */
-import { apiUrl, inDiscordProxy, mediaUrl, openOutside, trustedParentOrigin } from './base';
+import { apiUrl, inDiscordProxy, mediaUrl, openOutside, postToParent, trustedParentOrigin } from './base';
 import { PushAlertsRow } from './push';
 import React from 'react';
 import { BootstrapData, createTransport, fetchWatch, FeedPost, GroupChirp, KickGroup, Person, SiteNotification, ThreadSummary, Transport, WatchData, WatchItem, WireMessage } from './transport';
@@ -134,7 +134,9 @@ function fmtTs(ts?: number): string {
   if (d.toDateString() === y.toDateString()) return 'Yesterday ' + time;
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
 }
-interface Notif { id: string; title: string; text: string; time: string; tint: string; unread: boolean; link?: string; category?: string; type?: string; actor?: SiteNotification['actor']; canFollowBack?: boolean; following?: boolean; }
+interface Notif { id: string; title: string; text: string; time: string; tint: string; unread: boolean; link?: string; category?: string; type?: string; actor?: SiteNotification['actor']; canFollowBack?: boolean; following?: boolean; at?: number; cta?: string; academy?: { id: string; kind: string; actorId: string }; }
+/** An Academy notification the host page hands the phone (sml-loop-kick:academy-notifications): a new follower, a Trading Wall comment, a post by a followed trader, a like, a reply. */
+interface AcademyNotification { id: string; kind: string; actorId?: string; title?: string; text?: string; createdAt?: string; read?: boolean; cta?: string; canFollowBack?: boolean; }
 interface RoomMsg { user: string; color: string; text: string; }
 
 interface State {
@@ -160,6 +162,9 @@ interface State {
   roomFeed: RoomMsg[];
   thread: ThreadMsg[];
   notifs: Notif[];
+  /* the Academy's own notifications, from the host page; shown with the site's in the Alerts tab, the folded preview and the badge */
+  academyNotifs: Notif[];
+  academyCleared: string;
   vh: number;
   sendError: string;
   threads: ThreadSummary[];
@@ -274,6 +279,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
       { user: '@tapereader', color: '#b98cff', text: 'watching the 9:45 candle' },
     ],
     thread: [],
+    academyNotifs: [],
+    academyCleared: '',
     notifs: [
       { id: 'demo-1', title: PEER_NAME, text: 'Are you free tonight?', time: '2m', tint: NOTIF_TINTS[0], unread: true },
       { id: 'demo-2', title: 'Alex', text: 'Check out these pics!', time: '14m', tint: NOTIF_TINTS[1], unread: true },
@@ -351,8 +358,10 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     if (window.parent === window) return;
     let targetOrigin = '*';
     try { if (document.referrer) targetOrigin = new URL(document.referrer).origin; } catch { targetOrigin = '*'; }
-    const unread = this.state.notifs.filter(n => n.unread).length;
-    try { window.parent.postMessage({ type: 'sml-loop-kick:notifications', version: 1, unread, total: this.state.notifs.length }, targetOrigin); } catch { /* host not listening */ }
+    const all = this.allNotifs();
+    const unread = all.filter(n => n.unread).length;
+    const academyUnread = all.filter(n => n.unread && n.type === 'academy').length;
+    try { window.parent.postMessage({ type: 'sml-loop-kick:notifications', version: 1, unread, total: all.length, academyUnread }, targetOrigin); } catch { /* host not listening */ }
   };
 
   private publishEmbedSurface = () => {
@@ -407,7 +416,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   componentDidUpdate(_previousProps: Props, previousState: State) {
     if (previousState.draft !== this.state.draft && this._composer) this.growComposer(this._composer);
-    if (previousState.notifs !== this.state.notifs) this.publishNotifCount();
+    if (previousState.notifs !== this.state.notifs || previousState.academyNotifs !== this.state.academyNotifs || previousState.academyCleared !== this.state.academyCleared) this.publishNotifCount();
     if (previousState.draft !== this.state.draft) this.noteTyping();
     this.measureDeck();
     this.fitDevice();
@@ -669,11 +678,55 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     actor: item.actor || null,
     canFollowBack: item.canFollowBack,
     time: item.date ? new Date(item.date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '',
+    at: item.date ? (Date.parse(item.date) || 0) : 0,
     tint: item.category === 'priority' ? NOTIF_TINTS[2] : NOTIF_TINTS[index % NOTIF_TINTS.length],
     unread: !item.read,
     link: item.link,
     category: item.category,
   });
+
+  /* ---- Academy notifications, handed over by the host page (the Academy inside Discord) ---- */
+  private academyNotif = (item: AcademyNotification, index: number): Notif => {
+    const at = item.createdAt ? (Date.parse(item.createdAt) || 0) : 0;
+    const mins = at ? (Date.now() - at) / 60000 : 0;
+    const time = !at ? '' : mins < 1 ? 'now' : mins < 60 ? Math.round(mins) + 'm' : mins < 36 * 60 ? Math.round(mins / 60) + 'h' : new Date(at).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return {
+      id: 'academy-' + String(item.id),
+      title: String(item.title || 'Academy'),
+      text: String(item.text || ''),
+      type: 'academy',
+      academy: { id: String(item.id), kind: String(item.kind || ''), actorId: String(item.actorId || '') },
+      time, at,
+      tint: NOTIF_TINTS[index % NOTIF_TINTS.length],
+      unread: !item.read,
+      link: 'academy:' + String(item.id),
+      cta: String(item.cta || 'OPEN IN THE ACADEMY →'),
+      canFollowBack: item.kind === 'follow' && item.canFollowBack === true,
+      category: 'general',
+    };
+  };
+  private acceptAcademy = (raw: unknown) => {
+    const list = Array.isArray(raw) ? raw.filter(x => x && typeof x === 'object' && /^\d+$/.test(String((x as AcademyNotification).id || ''))).slice(0, 60) as AcademyNotification[] : [];
+    const prev = new Map(this.state.academyNotifs.map(n => [n.id, n]));
+    const next = list.map((item, i) => {
+      const n = this.academyNotif(item, i);
+      const was = prev.get(n.id);
+      /* what the member already did here (read it, followed back) stands until the host says the same */
+      if (was && !was.unread) n.unread = false;
+      if (was && was.following) { n.following = true; n.canFollowBack = false; }
+      return n;
+    });
+    this.setState({ academyNotifs: next });
+    this.academyTell('ack', { count: next.length });
+  };
+  /** site alerts and Academy alerts in one list, newest first; Academy ones the member cleared stay hidden */
+  private allNotifs = (): Notif[] => {
+    const cleared = Number(this.state.academyCleared) || 0;
+    const academy = cleared ? this.state.academyNotifs.filter(n => Number(n.academy?.id) > cleared) : this.state.academyNotifs;
+    if (!academy.length) return this.state.notifs;
+    return [...academy, ...this.state.notifs].sort((a, b) => (b.at || 0) - (a.at || 0));
+  };
+  private academyTell = (kind: string, payload: Record<string, unknown>) => postToParent({ type: 'sml-loop-kick:academy-' + kind, version: 1, ...payload });
 
   private applyBootstrap = (data: BootstrapData, preserveThread = true) => {
     const threads = data.threads?.threads || [];
@@ -975,6 +1028,12 @@ export default class LoopKickPhone extends React.Component<Props, State> {
     }
     const type = event.data && (event.data as { type?: string }).type;
     /* a tap anywhere on the host page (outside the phone) counts as the gesture phones demand before audio plays */
+    if (type === 'sml-loop-kick:academy-notifications') {
+      /* the Academy's own notifications ride along with the site's; only the Academy host page may hand them over */
+      if (!trustedParentOrigin(event.origin)) return;
+      this.acceptAcademy((event.data as { items?: unknown }).items);
+      return;
+    }
     if (type === 'sml-loop-kick:tap') { if (this.state.gkLive.some(l => l.needTap)) this.live.tapToHear(); if (this.state.gkNeedTap) this.gkTapPlay(); return; }
     if (type === 'sml-loop-kick:open') {
       // Owner call 2026-09-08: the phone's own X (or Escape) leaves the app closed and the page hides the popup;
@@ -1063,18 +1122,28 @@ export default class LoopKickPhone extends React.Component<Props, State> {
   };
 
   private markAllRead = async () => {
-    this.setState(prev => ({ notifs: prev.notifs.map(n => ({ ...n, unread: false })) }));
+    this.setState(prev => ({ notifs: prev.notifs.map(n => ({ ...n, unread: false })), academyNotifs: prev.academyNotifs.map(n => ({ ...n, unread: false })) }));
+    if (this.state.academyNotifs.some(n => n.unread)) this.academyTell('read', { all: true });
     try { const r = await this.transport.updateNotification({ action: 'read_all' }); if (r && Array.isArray(r.items)) this.setState({ notifs: this.toNotifs(r.items) }); } catch { /* optimistic state stands; the next bootstrap reconciles */ }
   };
 
   private clearAll = async () => {
     const before = this.state.notifs;
-    this.setState({ notifs: [] });
+    const top = this.state.academyNotifs.reduce((m, n) => Math.max(m, Number(n.academy?.id) || 0), Number(this.state.academyCleared) || 0);
+    this.setState({ notifs: [], academyCleared: top ? String(top) : this.state.academyCleared });
+    if (this.state.academyNotifs.some(n => n.unread)) this.academyTell('read', { all: true });
     try { const r = await this.transport.updateNotification({ action: 'clear_all' }); if (r && Array.isArray(r.items)) this.setState({ notifs: this.toNotifs(r.items) }); }
     catch { this.setState({ notifs: before }); }
   };
 
   private markNotification = async (item: Notif) => {
+    if (item.type === 'academy' && item.academy) {
+      /* an Academy alert: read here, opened by the host page (the profile, the wall, the comment on its chart, the chat room) */
+      this.setState(p => ({ academyNotifs: p.academyNotifs.map(n => n.id === item.id ? { ...n, unread: false } : n) }));
+      this.academyTell('read', { ids: [item.academy.id] });
+      this.academyTell('open', { id: item.academy.id, kind: item.academy.kind, actorId: item.academy.actorId });
+      return;
+    }
     this.setState(p => ({ notifs: p.notifs.map(n => n.id === item.id ? { ...n, unread: false } : n) }));
     if (!item.id.startsWith('demo-')) {
       try { await this.transport.updateNotification({ action: 'read', id: item.id }); } catch { /* optimistic read can retry later */ }
@@ -1115,6 +1184,11 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   /* Follow back from a follow alert (server side: sml-notify handles action=follow_back on the hub route). */
   private followBack = async (item: Notif) => {
+    if (item.type === 'academy' && item.academy) {
+      this.setState(p => ({ academyNotifs: p.academyNotifs.map(n => n.id === item.id ? { ...n, canFollowBack: false, following: true } : n) }));
+      this.academyTell('follow-back', { id: item.academy.id, actorId: item.academy.actorId });
+      return;
+    }
     if (!item.actor?.id) return;
     this.setState(p => ({ notifs: p.notifs.map(n => n.id === item.id ? { ...n, canFollowBack: false, following: true } : n) }));
     try { await this.transport.updateNotification({ action: 'follow_back', id: item.id, actor_id: item.actor.id }); }
@@ -1199,7 +1273,8 @@ export default class LoopKickPhone extends React.Component<Props, State> {
 
   render() {
     const s = this.state;
-    const unread = s.notifs.filter(n => n.unread).length;
+    const notifsAll = this.allNotifs();
+    const unread = notifsAll.filter(n => n.unread).length;
     const messageUnread = s.threads.reduce((sum, thread) => sum + (thread.muted ? 0 : thread.unread), 0);
     const activeThread = s.threads.find(thread => thread.id === s.activeThreadId);
     const activePerson = activeThread?.people?.[0];
@@ -1635,9 +1710,9 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                       {s.tab === 'notifs' && !s.post && !s.postItem && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                           <PushAlertsRow />
-                          {s.notifs.length > 0 && (
+                          {notifsAll.length > 0 && (
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, padding: '0 2px 2px' }}>
-                              {s.notifs.some(n => n.unread) && (
+                              {notifsAll.some(n => n.unread) && (
                                 <button type="button" onClick={() => void this.markAllRead()}
                                   style={{ border: '1px solid rgba(255,255,255,.12)', borderRadius: 999, padding: '5px 10px', fontSize: 9, fontWeight: 700, letterSpacing: .4, cursor: 'pointer', background: '#0e1721', color: '#cfe4f7' }}>
                                   Mark all read
@@ -1649,7 +1724,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               </button>
                             </div>
                           )}
-                          {s.notifs.map((n, i) => (
+                          {notifsAll.map((n, i) => (
                             <div key={n.id || i} onClick={() => void this.markNotification(n)}
                               style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '10px 12px', borderRadius: 13, cursor: 'pointer', background: n.unread ? 'linear-gradient(160deg,#0b1620 0%,#081018 100%)' : '#070d13', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.04)' }}>
                               {n.actor?.avatar
@@ -1658,11 +1733,11 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               <div style={{ minWidth: 0, flex: 1 }}>
                                 <div style={{ fontSize: 11.5, fontWeight: 600, color: n.actor ? '#5db9ff' : '#e8edf2', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.title}</div>
                                 <div style={{ fontSize: 11, color: '#dfe7ee', lineHeight: 1.45 }}>{n.text}</div>
-                                {(n.link || n.type === 'dm') && <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, marginTop: 4 }}>{n.type === 'dm' ? 'OPEN MESSAGE →' : n.type === 'live' ? 'WATCH LIVE →' : n.type === 'video' ? 'WATCH →' : n.type === 'follow' ? 'VIEW PROFILE →' : n.type === 'news' ? 'READ ON THE LOOP →' : n.type === 'mention' ? 'OPEN THE POST →' : (n.type === 'loop_bucks' || n.type === 'gift') ? 'OPEN WALLET →' : (n.type === 'group_alert' || n.type === 'group_chirp') ? 'OPEN THE GROUP →' : 'VIEW POST →'}</div>}
+                                {(n.link || n.type === 'dm') && <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 1, color: acc.c, marginTop: 4 }}>{n.cta ? n.cta : n.type === 'dm' ? 'OPEN MESSAGE →' : n.type === 'live' ? 'WATCH LIVE →' : n.type === 'video' ? 'WATCH →' : n.type === 'follow' ? 'VIEW PROFILE →' : n.type === 'news' ? 'READ ON THE LOOP →' : n.type === 'mention' ? 'OPEN THE POST →' : (n.type === 'loop_bucks' || n.type === 'gift') ? 'OPEN WALLET →' : (n.type === 'group_alert' || n.type === 'group_chirp') ? 'OPEN THE GROUP →' : 'VIEW POST →'}</div>}
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginLeft: 'auto', flex: 'none' }}>
                                 <div style={{ fontFamily: mono, fontSize: 8.5, color: '#b3bfca' }}>{n.time}</div>
-                                {n.type === 'follow' && n.actor?.id && (n.canFollowBack || n.following) && (
+                                {((n.type === 'follow' && n.actor?.id) || n.type === 'academy') && (n.canFollowBack || n.following) && (
                                   <button type="button" disabled={!n.canFollowBack} onClick={e => { e.stopPropagation(); void this.followBack(n); }}
                                     style={{ border: 0, borderRadius: 999, padding: '5px 9px', fontSize: 9, fontWeight: 700, cursor: n.canFollowBack ? 'pointer' : 'default', background: n.canFollowBack ? acc.c : '#131c26', color: n.canFollowBack ? acc.fg : '#dfe7ee' }}>
                                     {n.canFollowBack ? 'Follow back' : 'Following'}
@@ -1671,7 +1746,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               </div>
                             </div>
                           ))}
-                          {!s.notifs.length && <div style={{ color: '#dfe7ee', fontSize: 10, textAlign: 'center', padding: 14 }}>No site alerts. You’re all caught up.</div>}
+                          {!notifsAll.length && <div style={{ color: '#dfe7ee', fontSize: 10, textAlign: 'center', padding: 14 }}>No site alerts. You’re all caught up.</div>}
                         </div>
                       )}
                     </div>
@@ -2064,7 +2139,7 @@ export default class LoopKickPhone extends React.Component<Props, State> {
                               style={{ width: 17, height: 17, borderRadius: '50%', color: '#5c6771', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>×</span>
                           </span>
                         </div>
-                        {s.notifs.slice(0, 3).map((n, i) => (
+                        {notifsAll.slice(0, 3).map((n, i) => (
                           <div key={i} style={{ display: 'flex', gap: 9, alignItems: 'center', padding: '8px 10px', borderRadius: 11, background: 'linear-gradient(160deg,#0b1620 0%,#081018 100%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.05)' }}>
                             <div style={{ width: 22, height: 22, borderRadius: 7, flex: 'none', background: n.tint, boxShadow: 'inset 0 1px 0 rgba(255,255,255,.25)' }} />
                             <div style={{ minWidth: 0, flex: 1 }}>
