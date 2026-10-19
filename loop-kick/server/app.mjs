@@ -20,6 +20,12 @@ const FRAME_ANCESTORS = 'frame-ancestors https://stockmarketloop.com https://*.s
   + ' https://discord.com https://*.discord.com https://*.discordapp.com';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/* Hosts the media relay may fetch from: the site and its creator subdomains, the WordPress/Jetpack image CDNs,
+   Gravatar, and YouTube thumbnails. Anything else is refused before a single byte is fetched. */
+const MEDIA_HOST_RE = /^(?:(?:[a-z0-9-]+\.)*stockmarketloop\.com|secure\.gravatar\.com|[0-2]\.gravatar\.com|i[0-3]\.wp\.com|[a-z0-9-]+\.files\.wordpress\.com|img\.youtube\.com|i\.ytimg\.com)$/i;
+const MEDIA_MAX_BYTES = 40 * 1024 * 1024;
+export function mediaHostAllowed(hostname) { return MEDIA_HOST_RE.test(String(hostname || '').toLowerCase()); }
 const DEFAULT_SESSION_URL = 'https://stockmarketloop.com/wp-json/sml-loop-kick/v1/session';
 const DEFAULT_GATEWAY_URL = 'https://stockmarketloop.com/wp-json/sml-loop-kick/v1/gateway';
 const DEFAULT_UPLOAD_URL = 'https://stockmarketloop.com/wp-json/sml-loop-kick/v1/upload';
@@ -76,6 +82,7 @@ export function createLoopKickServer(options = {}) {
   const distDir = options.distDir || path.join(ROOT, 'dist');
   const verifySession = options.verifySession || verifyWordPressSession;
   const gateway = options.gateway || callWordPressGateway;
+  const mediaFetch = options.mediaFetch || fetch;
   const app = express();
   const server = http.createServer(app);
   const sessionCache = new Map();
@@ -163,6 +170,58 @@ export function createLoopKickServer(options = {}) {
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, service: 'loop-kick', source: 'wordpress-messenger' });
+  });
+
+  /* Media relay for the Discord Activities. Inside Discord the Activity's CSP allows images, audio and video only
+     from the Activity's own origin (its /.proxy/loop-kick mapping lands here), so the phone fetches every site
+     attachment, avatar, poster, chirp and mp4 through this route. Allow-listed hosts only (never an open proxy),
+     image/audio/video responses only, Range passed through for video seeking, 40 MB cap, 20 s upstream timeout. */
+  app.get('/api/media', async (req, res) => {
+    let target;
+    try { target = new URL(String(req.query.u || '')); } catch { res.status(400).json({ message: 'u must be an absolute URL' }); return; }
+    if (target.protocol !== 'https:' || !mediaHostAllowed(target.hostname)) { res.status(403).json({ message: 'host not allowed' }); return; }
+    const headers = { accept: 'image/*,video/*,audio/*;q=0.9,*/*;q=0.5', 'user-agent': 'LOOP-KICK media relay' };
+    const range = String(req.get('range') || '');
+    if (/^bytes=\d*-\d*$/.test(range)) headers.range = range;
+    let upstream;
+    try {
+      upstream = await mediaFetch(target.href, { headers, redirect: 'follow', signal: AbortSignal.timeout(20000) });
+    } catch {
+      res.status(502).json({ message: 'media unavailable' }); return;
+    }
+    const type = String(upstream.headers.get('content-type') || '').toLowerCase();
+    if (!upstream.ok || !/^(image|video|audio)\//.test(type)) {
+      try { await upstream.body?.cancel(); } catch { /* nothing to drain */ }
+      res.status(upstream.ok ? 415 : (upstream.status === 404 ? 404 : 502)).json({ message: upstream.ok ? 'not a media file' : 'media unavailable' }); return;
+    }
+    const length = Number(upstream.headers.get('content-length') || 0);
+    if (length > MEDIA_MAX_BYTES) { try { await upstream.body?.cancel(); } catch { /* ignore */ } res.status(413).json({ message: 'media too large' }); return; }
+    res.status(upstream.status === 206 ? 206 : 200);
+    for (const name of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag']) {
+      const value = upstream.headers.get(name);
+      if (value) res.set(name, value);
+    }
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.set('X-Content-Type-Options', 'nosniff');
+    if (!upstream.body) { res.end(); return; }
+    let sent = 0;
+    const reader = upstream.body.getReader();
+    const abort = () => { try { reader.cancel(); } catch { /* already closed */ } };
+    req.on('close', abort);
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sent += value.byteLength;
+        if (sent > MEDIA_MAX_BYTES) { abort(); res.destroy(); return; }
+        if (!res.write(value)) await new Promise((resolve) => res.once('drain', resolve));
+      }
+      res.end();
+    } catch {
+      res.destroy();
+    } finally {
+      req.off('close', abort);
+    }
   });
 
   /* Liveness: tiny, no external calls — safe for Render health checks and
